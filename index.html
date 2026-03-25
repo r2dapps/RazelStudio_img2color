@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Razel Studio — 3D Paint Visualizer</title>
+  <meta name="description"
+    content="Visualize wall paint colours and textures on your room photos with 3D perspective and soft-brush editing tools.">
+  <link rel="stylesheet" href="img2color.css">
+</head>
+
+<body>
+  <div class="shell">
+
+    <!-- ══ HEADER ════════════════════════════════════════════════════════════ -->
+    <header class="header">
+      <div class="logo">
+        <span class="logo-mark">Razel Studio</span>
+        <span class="logo-sub">3D Visualizer</span>
+      </div>
+      <div class="header-actions">
+        <span class="badge badge-engine">⬡ 3D Engine</span>
+        <!-- AI badge — hidden until AI section is re-enabled -->
+        <!-- <span class="badge badge-ai">✦ Claude Vision</span> -->
+        <!-- Download button -->
+        <button class="hdr-btn" id="btn-download" onclick="downloadImage()" title="Download painted image">
+          ⬇ Download
+        </button>
+      </div>
+    </header>
+
+    <!-- ══ BODY ══════════════════════════════════════════════════════════════ -->
+    <div class="body">
+
+      <!-- ── WORKSPACE (left / top) ──────────────────────────────────────── -->
+      <div class="workspace">
+
+        <!-- Canvas zone -->
+        <div class="canvas-zone" id="canvas-zone">
+
+          <!-- Drop zone -->
+          <div class="drop-zone" id="drop-zone">
+            <div class="drop-icon-wrap">🏠</div>
+            <div class="drop-title">Drop Your Room Photo</div>
+            <p class="drop-sub">Upload a room image and click any wall to fill it with colour.</p>
+            <div class="drop-actions">
+              <button class="btn-upload" onclick="document.getElementById('file-input').click()">📁 Choose
+                Photo</button>
+              <button class="btn-upload btn-camera" onclick="document.getElementById('camera-input').click()">📷 Take
+                Photo</button>
+            </div>
+            <input type="file" id="file-input" accept="image/*" style="display:none" onchange="handleFile(event)">
+            <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none"
+              onchange="handleFile(event)">
+          </div>
+
+          <!-- Canvas layers -->
+          <canvas id="main-canvas"></canvas>
+          <canvas id="paint-canvas"></canvas>
+          <canvas id="overlay-canvas"></canvas>
+          <svg id="anno-svg"></svg>
+
+        </div><!-- /canvas-zone -->
+
+        <!-- ── TOOLBAR ───────────────────────────────────────────────────── -->
+        <div class="toolbar">
+
+          <!-- Tool buttons -->
+          <div class="tg">
+            <button class="tbtn active" id="tbtn-fill" onclick="setTool('fill')" title="Fill wall with colour">🪣
+              Fill</button>
+            <button class="tbtn" id="tbtn-erase" onclick="setTool('erase')" title="Soft-erase painted area">🧹
+              Erase</button>
+            <button class="tbtn tbtn-protect" id="tbtn-protect" onclick="setTool('protect')"
+              title="Protect objects from fill">🛡 Protect</button>
+            <button class="tbtn" id="tbtn-clear" onclick="clearAll()" title="Reset all paint">↺ Reset</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <!-- Undo / Redo -->
+          <div class="tg">
+            <button class="tbtn" id="tbtn-undo" onclick="undo()" title="Undo (Ctrl+Z)">↩ Undo</button>
+            <button class="tbtn" id="tbtn-redo" onclick="redo()" title="Redo (Ctrl+Y)">↪ Redo</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <!-- Sliders -->
+          <div class="tol-row">
+            <label>Tolerance</label>
+            <input type="range" id="tol" min="5" max="80" value="20"
+              oninput="document.getElementById('tv').textContent=this.value">
+            <span class="tval" id="tv">20</span>
+          </div>
+          <div class="divider"></div>
+          <div class="tol-row">
+            <label>Edge</label>
+            <input type="range" id="edge-tol" min="5" max="80" value="28"
+              oninput="document.getElementById('ev').textContent=this.value">
+            <span class="tval" id="ev">28</span>
+          </div>
+          <div class="divider"></div>
+          <div class="tol-row">
+            <label>Brush</label>
+            <input type="range" id="brush-size" min="5" max="80" value="30"
+              oninput="document.getElementById('bv').textContent=this.value">
+            <span class="tval" id="bv">30</span>
+          </div>
+
+          <div class="divider"></div>
+
+          <!-- AI detect — commented out; remove comment tags to re-enable -->
+          <!--
+        <button class="tbtn ai" onclick="runAI()">✦ AI Detect Objects</button>
+        <div class="divider"></div>
+        -->
+
+          <!-- Status -->
+          <div class="status-dot-wrap">
+            <div class="sdot"></div>
+            <span class="status-txt" id="status-txt"><b>Upload</b> a room photo to begin</span>
+          </div>
+
+        </div><!-- /toolbar -->
+
+      </div><!-- /workspace -->
+
+      <!-- ── RIGHT PANEL ────────────────────────────────────────────────── -->
+      <div class="panel" id="panel">
+
+        <!-- Mobile tab strip (hidden on desktop) -->
+        <div class="mob-tabs">
+          <button class="mob-tab active" data-tab="color" onclick="switchTab('color')">🎨 Color</button>
+          <button class="mob-tab" data-tab="settings" onclick="switchTab('settings')">⚙ Settings</button>
+          <button class="mob-tab" data-tab="texture" onclick="switchTab('texture')">🖼 Texture</button>
+          <button class="mob-tab" data-tab="view" onclick="switchTab('view')">◈ View</button>
+          <!-- AI tab — commented out; remove comment tags to re-enable -->
+          <!-- <button class="mob-tab" data-tab="ai" onclick="switchTab('ai')">✦ AI</button> -->
+        </div>
+
+        <!-- 1. Color ───────────────────────────────────────────── -->
+        <div class="sec tab-pane active" data-pane="color">
+          <div class="sec-title">🎨 Paint Color</div>
+          <div class="active-color-row">
+            <div class="color-swatch-big" id="csb" style="background:#ff4d6d">
+              <input type="color" id="color-input" value="#ff4d6d" oninput="setColor(this.value,'Custom')">
+            </div>
+            <div class="color-meta">
+              <div class="hex" id="chex">#FF4D6D</div>
+              <div class="cname" id="cname">Coral Rouge</div>
+            </div>
+          </div>
+          <div class="palette" id="palette"></div>
+        </div>
+
+        <!-- 2. Settings ────────────────────────────────────────── -->
+        <div class="sec tab-pane" data-pane="settings">
+          <div class="sec-title">⚙ Paint Settings</div>
+          <div class="srow">
+            <label>Opacity</label>
+            <input type="range" id="sl-op" min="20" max="100" value="80" oninput="onOp(this.value)">
+            <span class="sv" id="sv-op">80%</span>
+          </div>
+          <div class="srow">
+            <label>Blend</label>
+            <input type="range" id="sl-bl" min="0" max="100" value="35" oninput="onBl(this.value)">
+            <span class="sv" id="sv-bl">35%</span>
+          </div>
+          <div class="srow" style="align-items:flex-start;flex-direction:column;gap:10px;margin-top:14px">
+            <div class="sec-title" style="margin-bottom:0;font-size:.6rem">✦ Finish Type</div>
+            <div class="finish-chips" id="finish-chips">
+              <div class="fchip active" onclick="setFinish(this,'matte')">Matte</div>
+              <div class="fchip" onclick="setFinish(this,'eggshell')">Eggshell</div>
+              <div class="fchip" onclick="setFinish(this,'satin')">Satin</div>
+              <div class="fchip" onclick="setFinish(this,'gloss')">High Gloss</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Texture ─────────────────────────────────────────── -->
+        <div class="sec tab-pane" data-pane="texture">
+          <div class="sec-title">🖼 Wall Texture</div>
+          <div class="mode-toggle">
+            <div class="mtbtn active" id="mode-color" onclick="setMode('color')">🎨 Color</div>
+            <div class="mtbtn" id="mode-texture" onclick="setMode('texture')">🖼 Texture</div>
+          </div>
+          <div class="tex-upload-row">
+            <button class="tex-upload-btn" onclick="document.getElementById('tex-file-input').click()">⬆ Upload
+              Texture</button>
+            <img class="tex-preview" id="tex-preview" alt="texture preview">
+            <span class="tex-name" id="tex-name">No texture loaded</span>
+            <input type="file" id="tex-file-input" accept="image/*" style="display:none" onchange="loadTexture(event)">
+          </div>
+          <div class="tex-scale-row">
+            <label>Scale</label>
+            <input type="range" id="sl-tex-scale" min="5" max="100" value="25" oninput="onTexScale(this.value)">
+            <span class="sv" id="sv-tex-scale">25%</span>
+          </div>
+          <div class="sec-title" style="font-size:.58rem;margin-bottom:8px">◈ Preset Patterns</div>
+          <div class="preset-tex-grid" id="preset-tex-grid"></div>
+        </div>
+
+        <!-- 4. 3D View ──────────────────────────────────────────── -->
+        <div class="sec tab-pane" data-pane="view">
+          <div class="sec-title">◈ 3D Perspective</div>
+          <div class="view-grid">
+            <div class="vbtn active" onclick="setView(this,'front')">Front</div>
+            <div class="vbtn" onclick="setView(this,'left')">Left</div>
+            <div class="vbtn" onclick="setView(this,'right')">Right</div>
+            <div class="vbtn" onclick="setView(this,'tilt')">Tilt Up</div>
+          </div>
+        </div>
+
+        <!-- ══ AI SECTION — commented out. Remove comment tags to re-enable ══
+      <div class="sec tab-pane" data-pane="ai">
+        <div class="sec-title">✦ AI Analysis</div>
+        <div class="ai-loading" id="ai-load">
+          <div class="spin"></div>
+          Analyzing with Claude Vision…
+        </div>
+        <div class="ai-result" id="ai-result">
+          <div class="ai-result-bar"></div>
+          <div class="ai-result-body">
+            <div class="ai-room-label" id="ai-room"></div>
+            <div class="ai-sum" id="ai-sum"></div>
+            <div class="chip-lbl">Walls</div>
+            <div class="chips" id="wall-chips"></div>
+            <div class="chip-lbl">Objects</div>
+            <div class="chips" id="obj-chips"></div>
+          </div>
+        </div>
+        <button class="tbtn ai" style="width:100%;justify-content:center;padding:11px" onclick="runAI()">✦ Run AI Analysis</button>
+      </div>
+      ══ END AI SECTION ══ -->
+
+        <!-- Stub elements required by JS (keep even while AI is disabled) -->
+        <div style="display:none">
+          <div id="ai-load"></div>
+          <div id="ai-result"></div>
+          <div id="ai-room"></div>
+          <div id="ai-sum"></div>
+          <div id="wall-chips"></div>
+          <div id="obj-chips"></div>
+        </div>
+
+        <!-- Apply -->
+        <button class="apply-btn" id="apply-btn" disabled onclick="redrawPaint()">
+          Apply Paint
+        </button>
+
+      </div><!-- /panel -->
+    </div><!-- /body -->
+  </div><!-- /shell -->
+
+  <script src="img2color.js"></script>
+</body>
+
+</html>
