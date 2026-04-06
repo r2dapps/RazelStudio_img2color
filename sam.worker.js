@@ -27,7 +27,8 @@ let origW = 0, origH = 0; // size of the image that was encoded
 
 /* ── CDN URLs ─────────────────────────────────── */
 // Use locally hosted ort.min.js (downloaded from CDN) — avoids network block issues
-const ORT_LOCAL = './ort.min.js';
+// Use locally hosted ort.min.js — avoids network block issues
+const ORT_LOCAL = 'ort.min.js';
 // MobileSAM weights hosted on HuggingFace (ONNX export)
 const ENC_URL   = 'https://huggingface.co/gifty-so/shoppy-mobilesam/resolve/main/mobile_sam_encoder.onnx';
 const DEC_URL   = 'https://huggingface.co/gifty-so/shoppy-mobilesam/resolve/main/mobile_sam_decoder.onnx';
@@ -87,30 +88,41 @@ function imageDataToRGB(imageData, W, H) {
    LOAD
 ════════════════════════════════════════════════ */
 async function load() {
+  console.log('[SAM Worker] Loading starting...');
   try {
-    post({ type:'progress', text:'Loading ONNX Runtime…', pct:0 });
+    post({ type:'progress', text:'Booting ONNX Runtime…', pct:0 });
 
     // Load locally hosted ORT runtime — no external CDN required
+    console.log('[SAM Worker] Importing:', ORT_LOCAL);
     importScripts(ORT_LOCAL);
+    
+    if (!self.ort) {
+        throw new Error('onnxruntime-web not found in self.ort after import');
+    }
+
     ortNamespace = self.ort;
+    console.log('[SAM Worker] ONNX runtime found!');
+    
     ortNamespace.env.wasm.numThreads = 1;   // single-thread wasm inside worker
     ortNamespace.env.wasm.simd       = true;
     // Point WASM resolver to local files (same directory as sam.worker.js)
     ortNamespace.env.wasm.wasmPaths  = { 'ort-wasm-simd.wasm': './ort-wasm-simd.wasm', 'ort-wasm.wasm': './ort-wasm.wasm' };
 
-    post({ type:'progress', text:'Downloading encoder (≈9 MB)…', pct:5 });
+    post({ type:'progress', text:'Loading encoder weights (≈9 MB)…', pct:5 });
     const encBuf = await fetchWithProgress(ENC_URL, 'Encoder');
 
-    post({ type:'progress', text:'Downloading decoder (≈4 MB)…', pct:55 });
+    post({ type:'progress', text:'Loading decoder weights (≈4 MB)…', pct:55 });
     const decBuf = await fetchWithProgress(DEC_URL, 'Decoder');
 
-    post({ type:'progress', text:'Initialising sessions…', pct:90 });
+    post({ type:'progress', text:'Warming up neural network…', pct:90 });
     const opts = { executionProviders: ['wasm'] };
     encSess = await ortNamespace.InferenceSession.create(encBuf, opts);
     decSess = await ortNamespace.InferenceSession.create(decBuf, opts);
 
+    console.log('[SAM Worker] Sessions ready!');
     post({ type:'ready' });
   } catch(err) {
+    console.error('[SAM Worker] Critical load failure:', err);
     post({ type:'error', message: err.message });
   }
 }

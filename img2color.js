@@ -438,14 +438,14 @@ function samLoad() {
   samWorker.onmessage = ({ data }) => {
     switch (data.type) {
       case 'progress':
-        statusSub.textContent = data.text;
+        statusSub.textContent = data.text + '...';
         document.getElementById('sam-prog-bar').style.width = (data.pct || 0) + '%';
         break;
       case 'ready':
         samReady = true;
         statusIcon.textContent = '✦';
-        statusTitle.textContent = 'MobileSAM Ready';
-        statusSub.textContent = 'Tap wall to add, tap object to exclude';
+        statusTitle.textContent = 'System Ready';
+        statusSub.textContent = 'Smart mask analysis active';
         document.getElementById('sam-prog-wrap').style.display = 'none';
         if (imgLoaded) samEncodeWrapper();
         break;
@@ -453,29 +453,35 @@ function samLoad() {
         samEncoded = true;
         samBusy = false;
         statusIcon.textContent = '✦';
-        statusSub.textContent = 'Target image embedded & ready to trace';
+        statusSub.textContent = 'Image analyze complete';
         break;
       case 'mask':
         samBusy = false;
         saveHistory();
-        const raw = data.data; // array at origW x origH
-        // Merge the mask (in this multipoint interaction, we replace the mask area 
-        // to respond cleanly to positive/negative clicks locally)
-        // A better UX for paint replaces the active tracking mask
+        const raw = data.data; 
         for (let i = 0; i < raw.length; i++) {
           if (raw[i]) maskData[i] = 1.0;
         }
         applyMaskBlur(1.5);
         redrawPaint();
-        setStatus(`✦ <b>Smart Segment Rendered</b>`);
+        setStatus(`Smart Mask Rendered`);
         break;
       case 'error':
         samBusy = false;
-        statusIcon.textContent = '⚠️';
-        statusTitle.textContent = 'SAM Error';
+        statusIcon.textContent = '❌';
+        statusTitle.textContent = 'AI Model Error';
         statusSub.textContent = data.message;
+        console.error('[AI Error]', data.message);
         break;
     }
+  };
+
+  samWorker.onerror = (err) => {
+    samBusy = false;
+    statusIcon.textContent = '❌';
+    statusTitle.textContent = 'Worker Crash';
+    statusSub.textContent = 'Browser blocked script or file missing';
+    console.error('[Worker Error]', err);
   };
   
   samWorker.postMessage({ type: 'load' });
@@ -498,22 +504,21 @@ function samEncodeWrapper() {
 
 function samDecodeInteractive(x, y, label) {
   if (!samReady) {
-    setStatus('⚠️ MobileSAM is still loading, please wait.');
+    setStatus('⚠️ AI Engine is still starting up...');
     return;
   }
   if (!samEncoded) {
-    setStatus('⚠️ Analyzing image contours, please wait a moment.');
+    setStatus('⚠️ Analyzing image contours (One-time process)...');
     return;
   }
   if (samBusy) return;
   samBusy = true;
   
-  setStatus('⏳ <b>AI is masking object...</b>');
+  // Safety timeout: Reset busy state after 10s if worker hangs
+  setTimeout(() => { if (samBusy) { samBusy = false; setStatus('AI timed out — try again'); } }, 10000);
   
-  // Add the user's point to the active session list
+  setStatus('⏳ Smart Masking...');
   samPoints.push({ x, y, label });
-  
-  // Wipe current mask before applying the new exact multipoint prediction
   maskData.fill(0); 
   
   samWorker.postMessage({ 
