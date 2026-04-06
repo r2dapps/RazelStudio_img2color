@@ -24,7 +24,10 @@
         <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" id="btn-theme" title="Toggle light/dark theme">☀</button>
         <button class="hdr-btn hdr-btn-icon" onclick="toggleFullscreen()" id="btn-fs" title="Fullscreen (F11)">⛶</button>
         <button class="hdr-btn hdr-btn-icon" onclick="toggleShortcuts()" title="Keyboard shortcuts (?)">⌨</button>
-        <button class="hdr-btn" id="btn-download" onclick="downloadImage()" title="Download painted image">⬇ Download</button>
+        <div class="dl-group">
+          <button class="hdr-btn dl-main" id="btn-download" onclick="downloadImage()" title="Download painted image">⬇ Download</button>
+          <button class="hdr-btn dl-compare" id="btn-compare-dl" onclick="downloadSideBySide()" title="Download side-by-side Before/After comparison">⇆ Compare</button>
+        </div>
       </div>
     </header>
 
@@ -59,20 +62,20 @@
             <canvas id="paint-canvas"></canvas>
             <canvas id="overlay-canvas"></canvas>
             <svg id="anno-svg"></svg>
-          </div>
 
-          <!-- Before / After comparison slider -->
-          <div class="ba-slider" id="ba-slider" style="display:none">
-            <canvas id="ba-canvas"></canvas>
-            <div class="ba-divider" id="ba-divider">
-              <div class="ba-handle">
-                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                  <circle cx="11" cy="11" r="10" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
-                  <path d="M7 11H4M18 11h-3M7 11l3-3M7 11l3 3M15 11l-3-3M15 11l-3 3" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
+            <!-- Before / After comparison slider — INSIDE canvas-inner so zoom/pinch stays in sync -->
+            <div class="ba-slider" id="ba-slider" style="display:none">
+              <canvas id="ba-canvas"></canvas>
+              <div class="ba-divider" id="ba-divider">
+                <div class="ba-handle">
+                  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                    <circle cx="11" cy="11" r="10" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
+                    <path d="M7 11H4M18 11h-3M7 11l3-3M7 11l3 3M15 11l-3-3M15 11l-3 3" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </div>
+                <div class="ba-label ba-label-before">BEFORE</div>
+                <div class="ba-label ba-label-after">AFTER</div>
               </div>
-              <div class="ba-label ba-label-before">BEFORE</div>
-              <div class="ba-label ba-label-after">AFTER</div>
             </div>
           </div>
 
@@ -140,11 +143,9 @@
 
           <div class="divider"></div>
 
-          <!-- AI detect — commented out; remove comment tags to re-enable -->
-          <!--
-        <button class="tbtn ai" onclick="runAI()">✦ AI Detect Objects</button>
-        <div class="divider"></div>
-        -->
+          <!-- AI Auto-Detect -->
+          <button class="tbtn ai" id="btn-run-ai-tool" onclick="runAISegmentation()" style="border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15); color: #ddd6fe;" title="Auto-detect walls using AI">✦ Auto-Wall</button>
+          <div class="divider"></div>
 
           <!-- Status -->
           <div class="status-dot-wrap">
@@ -165,8 +166,7 @@
           <button class="mob-tab" data-tab="settings" onclick="switchTab('settings')">⚙ Settings</button>
           <button class="mob-tab" data-tab="texture" onclick="switchTab('texture')">🖼 Texture</button>
           <button class="mob-tab" data-tab="view" onclick="switchTab('view')">◈ View</button>
-          <!-- AI tab — commented out; remove comment tags to re-enable -->
-          <!-- <button class="mob-tab" data-tab="ai" onclick="switchTab('ai')">✦ AI</button> -->
+          <button class="mob-tab" data-tab="ai" onclick="switchTab('ai')">✦ AI Detect</button>
         </div>
 
         <!-- 1. Color ───────────────────────────────────────────── -->
@@ -181,6 +181,13 @@
               <div class="cname" id="cname">Coral Rouge</div>
             </div>
           </div>
+
+          <!-- Recent colour history -->
+          <div class="recent-row" id="recent-row" style="display:none">
+            <div class="recent-label">◈ RECENT</div>
+            <div class="recent-swatches" id="recent-swatches"></div>
+          </div>
+
           <div class="palette" id="palette"></div>
         </div>
 
@@ -242,27 +249,17 @@
           </div>
         </div>
 
-        <!-- ══ AI SECTION — commented out. Remove comment tags to re-enable ══
-      <div class="sec tab-pane" data-pane="ai">
-        <div class="sec-title">✦ AI Analysis</div>
-        <div class="ai-loading" id="ai-load">
-          <div class="spin"></div>
-          Analyzing with Claude Vision…
+        <!-- 5. AI Segmentation ──────────────────────────────────────────── -->
+        <div class="sec tab-pane" data-pane="ai">
+          <div class="sec-title">✦ AI Auto-Detect</div>
+          <p style="font-size: 0.75rem; color: var(--sub); margin-bottom: 12px; line-height: 1.4;">
+            Automatically detect and perfectly mask walls using an on-device neural network (Segformer).
+          </p>
+          <button class="tbtn active" style="width: 100%; justify-content: center; padding: 12px; border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15);" onclick="runAISegmentation()" id="btn-run-ai">
+             🤖 Detect Walls Now
+          </button>
+          <div id="ai-status" style="font-size: 0.72rem; color: #c4b5fd; margin-top: 10px; text-align: center; line-height: 1.4;"></div>
         </div>
-        <div class="ai-result" id="ai-result">
-          <div class="ai-result-bar"></div>
-          <div class="ai-result-body">
-            <div class="ai-room-label" id="ai-room"></div>
-            <div class="ai-sum" id="ai-sum"></div>
-            <div class="chip-lbl">Walls</div>
-            <div class="chips" id="wall-chips"></div>
-            <div class="chip-lbl">Objects</div>
-            <div class="chips" id="obj-chips"></div>
-          </div>
-        </div>
-        <button class="tbtn ai" style="width:100%;justify-content:center;padding:11px" onclick="runAI()">✦ Run AI Analysis</button>
-      </div>
-      ══ END AI SECTION ══ -->
 
         <!-- Stub elements required by JS (keep even while AI is disabled) -->
         <div style="display:none">

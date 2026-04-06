@@ -19,6 +19,36 @@ let textureScale = 0.25;
 let isErasing    = false;
 let isProtecting = false;
 
+// ── Colour history (last 5 unique picks) ─────────────────────
+const MAX_HIST = 5;
+let colorHistory = [];   // [{hex, name}, ...] newest-first
+
+function addToColorHistory(hex, name) {
+  const normHex = hex.toUpperCase();
+  // Remove duplicate if already present
+  colorHistory = colorHistory.filter(c => c.hex !== normHex);
+  colorHistory.unshift({ hex: normHex, name: name || 'Custom' });
+  if (colorHistory.length > MAX_HIST) colorHistory.pop();
+  renderColorHistory();
+}
+
+function renderColorHistory() {
+  const row  = document.getElementById('recent-row');
+  const wrap = document.getElementById('recent-swatches');
+  if (!row || !wrap) return;
+  if (colorHistory.length === 0) { row.style.display = 'none'; return; }
+  row.style.display = 'flex';
+  wrap.innerHTML = '';
+  colorHistory.forEach(({ hex, name }) => {
+    const sw = document.createElement('div');
+    sw.className = 'rsw';
+    sw.style.background = hex;
+    sw.title = `${name}  ${hex}`;
+    sw.onclick = () => pickColor(hex, name, null);
+    wrap.appendChild(sw);
+  });
+}
+
 // ── Zoom / Pan state ─────────────────────────────
 let zoomLevel  = 1.0;
 let panX       = 0;
@@ -146,6 +176,7 @@ function pickColor(hex, name, el) {
   document.getElementById('color-input').value = hex;
   document.querySelectorAll('.sw').forEach(s => s.classList.remove('sel'));
   if (el) el.classList.add('sel');
+  addToColorHistory(hex, name);           // ← history
   if (imgLoaded && maskData) redrawPaint();
 }
 
@@ -155,6 +186,7 @@ function setColor(hex, name) {
   document.getElementById('chex').textContent = hex.toUpperCase();
   document.getElementById('cname').textContent = name || 'Custom';
   document.querySelectorAll('.sw').forEach(s => s.classList.remove('sel'));
+  addToColorHistory(hex, name || 'Custom'); // ← history
   if (imgLoaded && maskData) redrawPaint();
 }
 
@@ -266,6 +298,7 @@ mainC.addEventListener('click', e => {
   requestAnimationFrame(() => {
     const tol    = parseInt(document.getElementById('tol').value);
     const filled = floodFill(x, y, tol);
+    applyMaskBlur(1.5); // 1.5px Gaussian Blur for smooth paint transitions
     redrawPaint();
     setStatus(`<b>Filled</b> ${filled.toLocaleString()} pixels`);
   });
@@ -529,6 +562,54 @@ function floodFill(sx, sy, tolerance) {
   return count;
 }
 
+/* ── EDGE FEATHERING (1.5px Gaussian Blur) ─────────────────────────────
+   Ensures paint transitions smoothly into the corners and edges.    */
+function applyMaskBlur(sigma) {
+  if (!maskData) return;
+  const W = mainC.width, H = mainC.height;
+  
+  // 1D Gaussian kernel
+  const r = Math.max(1, Math.ceil(sigma * 2.5));
+  const kernel = new Float32Array(r * 2 + 1);
+  let sum = 0;
+  for (let i = -r; i <= r; i++) {
+    const w = Math.exp(-(i*i) / (2 * sigma * sigma));
+    kernel[i + r] = w;
+    sum += w;
+  }
+  for (let i = 0; i < kernel.length; i++) kernel[i] /= sum;
+
+  // Horizontal pass -> tmp
+  const tmp = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let v = 0;
+      for (let i = -r; i <= r; i++) {
+        let nx = x + i;
+        if (nx < 0) nx = 0; else if (nx >= W) nx = W - 1;
+        v += maskData[y * W + nx] * kernel[i + r];
+      }
+      tmp[y * W + x] = v;
+    }
+  }
+
+  // Vertical pass -> maskData
+  const out = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let v = 0;
+      for (let i = -r; i <= r; i++) {
+        let ny = y + i;
+        if (ny < 0) ny = 0; else if (ny >= H) ny = H - 1;
+        v += tmp[ny * W + x] * kernel[i + r];
+      }
+      out[y * W + x] = v;
+    }
+  }
+  maskData.set(out);
+}
+
+
 // Soft feather-brush erase with Gaussian-style radial falloff
 function eraseAt(cx, cy, r) {
   const W = mainC.width, H = mainC.height;
@@ -687,27 +768,37 @@ function redrawPaint() {
     }
 
   } else {
-    /* ── COLOR MODE ──────────────────────────────────────── */
+    /* ── COLOR MODE (Multiply Blend Mode) ──────────────────────── */
     const col = hexToRgb(curColor);
     if (!col) return;
     const dst = new ImageData(W, H);
     const src = origData.data;
     const dd  = dst.data;
     for (let i = 0; i < maskData.length; i++) {
-      if (!maskData[i]) continue;
+      const alphaVal = maskData[i];
+      if (alphaVal <= 0) continue;
+      
       const pi  = i * 4;
       const oR  = src[pi], oG = src[pi+1], oB = src[pi+2];
+      
+      // Calculate grayscale luminance of the original image
       const lum = (0.299*oR + 0.587*oG + 0.114*oB) / 255;
-      const shade = 0.40 + lum * 0.80;
-      const sh    = shine * Math.pow(lum, 1.8);
-      const bl    = curBl;
-      const pR = col.r * shade * (1-sh) + 255*sh;
-      const pG = col.g * shade * (1-sh) + 255*sh;
-      const pB = col.b * shade * (1-sh) + 255*sh;
-      dd[pi]   = Math.min(255, pR*(1-bl) + oR*bl);
-      dd[pi+1] = Math.min(255, pG*(1-bl) + oG*bl);
-      dd[pi+2] = Math.min(255, pB*(1-bl) + oB*bl);
-      dd[pi+3] = Math.round(curOp * 255);
+      
+      // Multiply blend mode (original luminance acts as multiplier for curColor)
+      const pR = col.r * lum;
+      const pG = col.g * lum;
+      const pB = col.b * lum;
+      
+      // Preserve highlights based on finish type
+      const sh = shine * Math.pow(lum, 1.8);
+      const bl = curBl;
+      
+      dd[pi]   = Math.min(255, pR*(1-bl) + oR*bl + 255*sh);
+      dd[pi+1] = Math.min(255, pG*(1-bl) + oG*bl + 255*sh);
+      dd[pi+2] = Math.min(255, pB*(1-bl) + oB*bl + 255*sh);
+      
+      // Soft alpha based on mask gaussian feathering and user opacity
+      dd[pi+3] = Math.round(curOp * alphaVal * 255);
     }
     paintX.putImageData(dst, 0, 0);
   }
@@ -764,17 +855,26 @@ function setFinish(el, f) {
   if (imgLoaded && maskData) redrawPaint();
 }
 
+// Eyedropper SVG cursor (pipette pointing bottom-left, hotspot at tip)
+const EYE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath d='M20.71 5.63l-2.34-2.34a1 1 0 0 0-1.41 0l-3.12 3.12-1.41-1.42-1.42 1.42 1.41 1.41-6.6 6.6A2 2 0 0 0 5 16v3h3a2 2 0 0 0 1.42-.59l6.6-6.6 1.41 1.42 1.42-1.42-1.42-1.41 3.12-3.12a1 1 0 0 0 0-1.65z' fill='white' stroke='%23222' stroke-width='0.5'/%3E%3C/svg%3E") 0 24, crosshair`;
+
 function setTool(t) {
   curTool = t;
   ['fill','erase','protect','eye'].forEach(k => {
     const b = document.getElementById('tbtn-' + (k === 'eye' ? 'eye' : k));
     if (b) b.classList.toggle('active', (k === 'eye' ? 'eyedrop' : k) === t);
   });
-  const isBrush   = (t === 'erase' || t === 'protect');
-  const isEye     = (t === 'eyedrop');
+  const isBrush = (t === 'erase' || t === 'protect');
+  const isEye   = (t === 'eyedrop');
   mainC.classList.toggle('brush-mode',   isBrush);
   mainC.classList.toggle('eyedrop-mode', isEye);
-  mainC.style.cursor = isBrush ? 'none' : isEye ? 'crosshair' : 'crosshair';
+  if (isBrush) {
+    mainC.style.cursor = 'none';
+  } else if (isEye) {
+    mainC.style.cursor = EYE_CURSOR;
+  } else {
+    mainC.style.cursor = 'crosshair';
+  }
   if (!isBrush) clearBrushCursor();
 }
 
@@ -881,113 +981,196 @@ const _origRedraw = redrawPaint;
 // (patched below after redrawPaint is defined — see bottom of file)
 
 /* ════════════════════════════════════════════════
-   DOWNLOAD WITH WATERMARK
+   DOWNLOAD WITH WATERMARK  — Premium Footer Bar
 ════════════════════════════════════════════════ */
 function downloadImage() {
   if (!imgLoaded) { alert('Upload a room photo first.'); return; }
 
   const W = mainC.width, H = mainC.height;
+
+  // ── Scale factor (relative to a 1400px-wide reference image) ──────────────
+  const scale = Math.max(0.75, Math.min(3, W / 1400));
+  const s = v => Math.round(v * scale);
+
+  // ── Footer bar dimensions ─────────────────────────────────────────────────
+  const barH        = s(110);           // total footer height
+  const swatchW     = s(110);           // right colour tile width
+  const innerPadX   = s(28);           // left/right text padding
+  const innerPadY   = s(16);           // top/bottom text padding
+  const accentLineH = s(3);            // top gradient accent line
+
+  const barY = H - barH;               // footer top Y
+
+  // ── Retrieve current colour info ──────────────────────────────────────────
+  const colorName = (document.getElementById('cname')?.textContent || 'Custom').toUpperCase();
+  const hexCode   = (document.getElementById('chex')?.textContent  || '#FFFFFF');
+  const hexRaw    = hexCode.replace('#', '');
+
+  // ── Parse hex → RGB for luminance check ──────────────────────────────────
+  const col = hexToRgb(hexCode) || { r: 200, g: 200, b: 200 };
+  const lum = (0.299 * col.r + 0.587 * col.g + 0.114 * col.b) / 255;
+  const swatchTextColor = lum > 0.55 ? 'rgba(0,0,0,0.70)' : 'rgba(255,255,255,0.85)';
+
+  // ══════════════════════════════════════════════
+  //  OUTPUT CANVAS  (image height + footer bar)
+  // ══════════════════════════════════════════════
   const out = document.createElement('canvas');
-  out.width  = W; out.height = H;
+  out.width  = W;
+  out.height = H + barH;
   const ctx  = out.getContext('2d');
 
-  // 1. Draw composite (room + paint)
+  // 1. Draw room photo + paint
   ctx.drawImage(mainC,  0, 0);
   ctx.drawImage(paintC, 0, 0);
 
-  // 2. Watermark — bottom-right pill badge
-  const colorName = (document.getElementById('cname')?.textContent || 'Custom');
-  const hexCode   = (document.getElementById('chex')?.textContent  || '#FFFFFF');
-  const hexRaw    = hexCode.replace('#','');
+  // ══════════════════════════════════════════════
+  //  FOOTER BACKGROUND
+  // ══════════════════════════════════════════════
+  // Deep charcoal base
+  ctx.fillStyle = '#0d0d12';
+  ctx.fillRect(0, H, W, barH);
 
-  // Watermark dimensions — scale with image width
-  const scale     = Math.max(1, W / 1200);
-  const padX      = Math.round(22 * scale);
-  const padY      = Math.round(18 * scale);
-  const pillPad   = Math.round(14 * scale);
-  const pillH     = Math.round(52 * scale);
-  const radius    = Math.round(12 * scale);
-  const swatchR   = Math.round(10 * scale);
-  const swatchX   = padX + pillPad + swatchR;
-  const gap       = Math.round(10 * scale);
+  // Subtle radial glow from the colour swatch area (right side)
+  const glow = ctx.createRadialGradient(
+    W - swatchW / 2, H + barH / 2, 0,
+    W - swatchW / 2, H + barH / 2, swatchW * 1.6
+  );
+  glow.addColorStop(0,   hexToRgba(hexCode, 0.18));
+  glow.addColorStop(1,   'transparent');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, H, W, barH);
 
-  // Fonts
-  const titleSize = Math.round(11 * scale);
-  const nameSize  = Math.round(15 * scale);
-  const hexSize   = Math.round(11 * scale);
-
-  ctx.font = `700 ${titleSize}px "Space Mono", monospace`;
-  ctx.letterSpacing = '2px';
-  const titleTxt  = 'RAZEL STUDIO';
-  const titleW    = ctx.measureText(titleTxt).width;
-  ctx.font = `700 ${nameSize}px "DM Sans", sans-serif`;
-  const nameW     = ctx.measureText(colorName).width;
-  ctx.font        = `400 ${hexSize}px "Space Mono", monospace`;
-  const hexW      = ctx.measureText(hexCode).width;
-  const textW     = Math.max(titleW, nameW, hexW);
-  const pillW     = swatchR * 2 + gap + textW + pillPad * 2;
-
-  const pillX = W - padX - pillW;
-  const pillY = H - padY - pillH;
-
-  // Pill background
+  // Subtle dot-grid texture over footer
   ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur  = Math.round(16 * scale);
-  ctx.shadowOffsetY = Math.round(4 * scale);
-  ctx.fillStyle   = 'rgba(11,11,15,0.82)';
-  roundRect(ctx, pillX, pillY, pillW, pillH, radius);
-  ctx.fill();
+  ctx.globalAlpha = 0.06;
+  const dotSpacing = s(14);
+  ctx.fillStyle = '#8888aa';
+  for (let dx = 0; dx < W; dx += dotSpacing) {
+    for (let dy = 0; dy < barH; dy += dotSpacing) {
+      ctx.beginPath();
+      ctx.arc(dx, H + dy, s(1), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
   ctx.restore();
 
-  // Subtle left accent border
+  // ══════════════════════════════════════════════
+  //  TOP ACCENT LINE  (gradient rule)
+  // ══════════════════════════════════════════════
+  const accentGrad = ctx.createLinearGradient(0, H, W, H);
+  accentGrad.addColorStop(0,    '#ff4d6d');
+  accentGrad.addColorStop(0.5,  '#7c3aed');
+  accentGrad.addColorStop(1,    hexCode);
+  ctx.fillStyle = accentGrad;
+  ctx.fillRect(0, H, W, accentLineH);
+
+  // ══════════════════════════════════════════════
+  //  RIGHT SWATCH TILE
+  // ══════════════════════════════════════════════
+  const swatchX1 = W - swatchW;
+  const swatchY1 = H + accentLineH;
+  const swatchH  = barH - accentLineH;
+
+  ctx.fillStyle = hexCode;
+  ctx.fillRect(swatchX1, swatchY1, swatchW, swatchH);
+
+  // Diagonal gloss sheen on swatch
+  const sheenGrad = ctx.createLinearGradient(swatchX1, swatchY1, W, H + barH);
+  sheenGrad.addColorStop(0,   'rgba(255,255,255,0.18)');
+  sheenGrad.addColorStop(0.5, 'rgba(255,255,255,0.04)');
+  sheenGrad.addColorStop(1,   'rgba(0,0,0,0.12)');
+  ctx.fillStyle = sheenGrad;
+  ctx.fillRect(swatchX1, swatchY1, swatchW, swatchH);
+
+  // Vertical separator line between text area and swatch
   ctx.save();
-  const grad = ctx.createLinearGradient(pillX, pillY, pillX, pillY + pillH);
-  grad.addColorStop(0,   '#ff4d6d');
-  grad.addColorStop(1,   '#7c3aed');
-  ctx.fillStyle = grad;
-  roundRect(ctx, pillX, pillY, Math.round(3 * scale), pillH, [radius, 0, 0, radius]);
-  ctx.fill();
+  const sepGrad = ctx.createLinearGradient(swatchX1, swatchY1, swatchX1, H + barH);
+  sepGrad.addColorStop(0,   'rgba(255,255,255,0.0)');
+  sepGrad.addColorStop(0.3, 'rgba(255,255,255,0.15)');
+  sepGrad.addColorStop(1,   'rgba(255,255,255,0.0)');
+  ctx.fillStyle = sepGrad;
+  ctx.fillRect(swatchX1, swatchY1, s(1), swatchH);
   ctx.restore();
 
-  // Color swatch circle
-  const swatchCY  = pillY + pillH / 2;
-  const textLeft  = swatchX + swatchR + gap;
+  // Hex code label centred on swatch
+  ctx.save();
+  ctx.font = `700 ${s(10)}px "Space Mono", monospace`;
+  ctx.fillStyle   = swatchTextColor;
+  ctx.textAlign   = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.letterSpacing = '1px';
+  ctx.fillText(hexCode, swatchX1 + swatchW / 2, H + barH / 2 + accentLineH / 2);
+  ctx.restore();
 
+  // ══════════════════════════════════════════════
+  //  LEFT TEXT AREA
+  // ══════════════════════════════════════════════
+  const textAreaW = W - swatchW;
+  const textX     = innerPadX;
+  const textY     = H + accentLineH + innerPadY;
+
+  // Brand row: ⬡ icon + "RAZEL STUDIO"
+  ctx.save();
+  ctx.font         = `700 ${s(10)}px "Space Mono", monospace`;
+  ctx.fillStyle    = '#f0b429';                // gold
+  ctx.textBaseline = 'top';
+  ctx.letterSpacing = '3px';
+  ctx.fillText('⬡  RAZEL STUDIO', textX, textY);
+  ctx.restore();
+
+  // Colour name — large, prominent
+  const nameFontSize = s(28);
+  ctx.save();
+  ctx.font         = `700 ${nameFontSize}px "DM Sans", sans-serif`;
+  ctx.fillStyle    = '#ffffff';
+  ctx.textBaseline = 'top';
+  ctx.letterSpacing = '1px';
+  // Truncate if the name is too wide
+  let displayName = colorName;
+  const maxNameW  = textAreaW - innerPadX * 2 - s(40);
+  while (ctx.measureText(displayName).width > maxNameW && displayName.length > 3) {
+    displayName = displayName.slice(0, -1);
+  }
+  if (displayName !== colorName) displayName += '…';
+  ctx.fillText(displayName, textX, textY + s(16));
+  ctx.restore();
+
+  // Tagline row: finish type + "Paint Visualizer"
+  const finishLabel = ({ matte:'Matte', eggshell:'Eggshell', satin:'Satin', gloss:'High Gloss' })[curFinish] || 'Matte';
+  ctx.save();
+  ctx.font         = `400 ${s(10)}px "DM Sans", sans-serif`;
+  ctx.fillStyle    = 'rgba(160,160,200,0.75)';
+  ctx.textBaseline = 'top';
+  ctx.letterSpacing = '0.5px';
+  ctx.fillText(`${finishLabel} Finish  ·  razelstudio.com`, textX, textY + s(16) + nameFontSize + s(6));
+  ctx.restore();
+
+  // Right-side of text area: small decorative colour arc / ring
+  const ringCX = textAreaW - s(54);
+  const ringCY = H + barH / 2;
+  const ringR  = s(22);
+  // Outer ring in the colour
   ctx.save();
   ctx.beginPath();
-  ctx.arc(swatchX, swatchCY, swatchR, 0, Math.PI * 2);
+  ctx.arc(ringCX, ringCY, ringR, 0, Math.PI * 2);
+  ctx.strokeStyle = hexToRgba(hexCode, 0.5);
+  ctx.lineWidth   = s(3);
+  ctx.stroke();
+  // Inner fill
+  ctx.beginPath();
+  ctx.arc(ringCX, ringCY, ringR - s(5), 0, Math.PI * 2);
+  ctx.fillStyle = hexToRgba(hexCode, 0.25);
+  ctx.fill();
+  // Tiny dot centre
+  ctx.beginPath();
+  ctx.arc(ringCX, ringCY, s(4), 0, Math.PI * 2);
   ctx.fillStyle = hexCode;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-  ctx.lineWidth   = Math.round(1.5 * scale);
-  ctx.stroke();
   ctx.restore();
 
-  // Text: brand title
-  ctx.save();
-  ctx.font = `700 ${titleSize}px "Space Mono", monospace`;
-  ctx.fillStyle   = 'rgba(240,180,41,0.9)';  // gold
-  ctx.textBaseline = 'top';
-  const textTopY  = pillY + Math.round(9 * scale);
-  ctx.fillText(titleTxt, textLeft, textTopY);
-
-  // Text: color name
-  ctx.font         = `600 ${nameSize}px "DM Sans", sans-serif`;
-  ctx.fillStyle    = '#f0f0f8';
-  ctx.textBaseline = 'top';
-  ctx.fillText(colorName, textLeft, textTopY + titleSize + Math.round(3 * scale));
-
-  // Text: hex code
-  ctx.font         = `400 ${hexSize}px "Space Mono", monospace`;
-  ctx.fillStyle    = 'rgba(160,160,184,0.85)';
-  ctx.textBaseline = 'top';
-  ctx.fillText(hexCode, textLeft, textTopY + titleSize + nameSize + Math.round(6 * scale));
-  ctx.restore();
-
-  // Trigger download
-  const safeName  = colorName.replace(/\s+/g, '-');
-  const filename  = `RazelStudio_${safeName}_${hexRaw}.png`;
+  // ── Trigger download ──────────────────────────────────────────────────────
+  const safeName = colorName.replace(/\s+/g, '-').replace(/[^A-Z0-9\-]/gi, '');
+  const filename = `RazelStudio_${safeName}_${hexRaw}.png`;
   const a = document.createElement('a');
   a.href     = out.toDataURL('image/png');
   a.download = filename;
@@ -995,6 +1178,211 @@ function downloadImage() {
   a.click();
   document.body.removeChild(a);
   setStatus(`⬇ <b>Saved</b> ${filename}`);
+}
+
+// Helper: hex → "rgba(r,g,b,a)" string
+function hexToRgba(hex, alpha) {
+  const c = hexToRgb(hex);
+  if (!c) return `rgba(128,128,128,${alpha})`;
+  return `rgba(${c.r},${c.g},${c.b},${alpha})`;
+}
+
+/* ════════════════════════════════════════════════
+   SIDE-BY-SIDE COMPARISON EXPORT
+════════════════════════════════════════════════ */
+function downloadSideBySide() {
+  if (!imgLoaded) { alert('Upload a room photo first.'); return; }
+
+  const W = mainC.width, H = mainC.height;
+
+  // ── Scale + dimensions ────────────────────────────────────────────────────
+  const scale      = Math.max(0.75, Math.min(3, W / 1400));
+  const s          = v => Math.round(v * scale);
+  const divW       = s(6);             // centre divider width
+  const barH       = s(110);          // footer height
+  const swatchW    = s(110);
+  const accentLineH = s(3);
+  const innerPadX  = s(28);
+  const innerPadY  = s(16);
+
+  const totalW = W * 2 + divW;
+  const totalH = H + barH;
+
+  // ── Colour info ───────────────────────────────────────────────────────────
+  const colorName = (document.getElementById('cname')?.textContent || 'Custom').toUpperCase();
+  const hexCode   = (document.getElementById('chex')?.textContent  || '#FFFFFF');
+  const hexRaw    = hexCode.replace('#', '');
+  const col       = hexToRgb(hexCode) || { r: 200, g: 200, b: 200 };
+  const lum       = (0.299 * col.r + 0.587 * col.g + 0.114 * col.b) / 255;
+  const swatchTxt = lum > 0.55 ? 'rgba(0,0,0,0.70)' : 'rgba(255,255,255,0.85)';
+
+  const out = document.createElement('canvas');
+  out.width  = totalW;
+  out.height = totalH;
+  const ctx  = out.getContext('2d');
+
+  // ── LEFT HALF: BEFORE (original) ─────────────────────────────────────────
+  ctx.drawImage(mainC, 0, 0);
+
+  // ── RIGHT HALF: AFTER (painted) ──────────────────────────────────────────
+  const rightX = W + divW;
+  ctx.drawImage(mainC,  rightX, 0);
+  ctx.drawImage(paintC, rightX, 0);
+
+  // ── CENTRE DIVIDER ────────────────────────────────────────────────────────
+  const divGrad = ctx.createLinearGradient(W, 0, W + divW, 0);
+  divGrad.addColorStop(0,   'rgba(255,77,109,0.9)');
+  divGrad.addColorStop(0.5, 'rgba(124,58,237,0.9)');
+  divGrad.addColorStop(1,   'rgba(255,77,109,0.9)');
+  ctx.fillStyle = divGrad;
+  ctx.fillRect(W, 0, divW, H);
+
+  // ── BEFORE / AFTER PILL LABELS ────────────────────────────────────────────
+  function drawLabel(text, x, y) {
+    const pad  = s(12);
+    const fSize = s(11);
+    ctx.save();
+    ctx.font = `700 ${fSize}px "Space Mono", monospace`;
+    ctx.letterSpacing = '2px';
+    const tw  = ctx.measureText(text).width;
+    const pw  = tw + pad * 2;
+    const ph  = fSize + pad;
+    // pill background
+    ctx.shadowColor   = 'rgba(0,0,0,0.55)';
+    ctx.shadowBlur    = s(10);
+    ctx.fillStyle     = 'rgba(13,13,18,0.80)';
+    roundRect(ctx, x, y, pw, ph, s(6));
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // text
+    ctx.fillStyle    = '#f0f0f8';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x + pad, y + ph / 2);
+    ctx.restore();
+  }
+  drawLabel('BEFORE', s(16),           s(16));
+  drawLabel('AFTER',  rightX + s(16),  s(16));
+
+  // ══════════════════════════════════════════════
+  //  FOOTER  (reused premium design, full width)
+  // ══════════════════════════════════════════════
+  // Charcoal base
+  ctx.fillStyle = '#0d0d12';
+  ctx.fillRect(0, H, totalW, barH);
+
+  // Radial glow from swatch area
+  const glow = ctx.createRadialGradient(
+    totalW - swatchW / 2, H + barH / 2, 0,
+    totalW - swatchW / 2, H + barH / 2, swatchW * 1.6
+  );
+  glow.addColorStop(0,   hexToRgba(hexCode, 0.18));
+  glow.addColorStop(1,   'transparent');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, H, totalW, barH);
+
+  // Dot grid
+  ctx.save();
+  ctx.globalAlpha = 0.06;
+  const ds = s(14);
+  ctx.fillStyle = '#8888aa';
+  for (let dx = 0; dx < totalW; dx += ds) {
+    for (let dy = 0; dy < barH; dy += ds) {
+      ctx.beginPath(); ctx.arc(dx, H + dy, s(1), 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  // Top accent line
+  const ag = ctx.createLinearGradient(0, H, totalW, H);
+  ag.addColorStop(0,   '#ff4d6d');
+  ag.addColorStop(0.5, '#7c3aed');
+  ag.addColorStop(1,   hexCode);
+  ctx.fillStyle = ag;
+  ctx.fillRect(0, H, totalW, accentLineH);
+
+  // Right swatch tile
+  const swatchX1 = totalW - swatchW;
+  const swatchY1 = H + accentLineH;
+  const swatchH  = barH - accentLineH;
+
+  ctx.fillStyle = hexCode;
+  ctx.fillRect(swatchX1, swatchY1, swatchW, swatchH);
+
+  const sg2 = ctx.createLinearGradient(swatchX1, swatchY1, totalW, H + barH);
+  sg2.addColorStop(0,   'rgba(255,255,255,0.18)');
+  sg2.addColorStop(0.5, 'rgba(255,255,255,0.04)');
+  sg2.addColorStop(1,   'rgba(0,0,0,0.12)');
+  ctx.fillStyle = sg2;
+  ctx.fillRect(swatchX1, swatchY1, swatchW, swatchH);
+
+  ctx.save();
+  const sepG = ctx.createLinearGradient(swatchX1, swatchY1, swatchX1, H + barH);
+  sepG.addColorStop(0,   'rgba(255,255,255,0.0)');
+  sepG.addColorStop(0.3, 'rgba(255,255,255,0.15)');
+  sepG.addColorStop(1,   'rgba(255,255,255,0.0)');
+  ctx.fillStyle = sepG;
+  ctx.fillRect(swatchX1, swatchY1, s(1), swatchH);
+  ctx.restore();
+
+  ctx.save();
+  ctx.font = `700 ${s(10)}px "Space Mono", monospace`;
+  ctx.fillStyle    = swatchTxt;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.letterSpacing = '1px';
+  ctx.fillText(hexCode, swatchX1 + swatchW / 2, H + barH / 2 + accentLineH / 2);
+  ctx.restore();
+
+  // Left text area
+  const textAreaW   = totalW - swatchW;
+  const textX       = innerPadX;
+  const textY       = H + accentLineH + innerPadY;
+  const nameFontSize = s(28);
+
+  ctx.save();
+  ctx.font = `700 ${s(10)}px "Space Mono", monospace`;
+  ctx.fillStyle = '#f0b429'; ctx.textBaseline = 'top'; ctx.letterSpacing = '3px';
+  ctx.fillText('⬡  RAZEL STUDIO', textX, textY);
+  ctx.restore();
+
+  ctx.save();
+  ctx.font = `700 ${nameFontSize}px "DM Sans", sans-serif`;
+  ctx.fillStyle = '#ffffff'; ctx.textBaseline = 'top'; ctx.letterSpacing = '1px';
+  let dispName = colorName;
+  const maxNW = textAreaW - innerPadX * 2 - s(40);
+  while (ctx.measureText(dispName).width > maxNW && dispName.length > 3) dispName = dispName.slice(0, -1);
+  if (dispName !== colorName) dispName += '…';
+  ctx.fillText(dispName, textX, textY + s(16));
+  ctx.restore();
+
+  const finishLabel = ({ matte:'Matte', eggshell:'Eggshell', satin:'Satin', gloss:'High Gloss' })[curFinish] || 'Matte';
+  ctx.save();
+  ctx.font = `400 ${s(10)}px "DM Sans", sans-serif`;
+  ctx.fillStyle = 'rgba(160,160,200,0.75)'; ctx.textBaseline = 'top'; ctx.letterSpacing = '0.5px';
+  ctx.fillText(`${finishLabel} Finish  ·  Before \u2192 After  ·  razelstudio.com`, textX, textY + s(16) + nameFontSize + s(6));
+  ctx.restore();
+
+  // Decorative ring
+  const ringCX = textAreaW - s(54), ringCY = H + barH / 2, ringR = s(22);
+  ctx.save();
+  ctx.beginPath(); ctx.arc(ringCX, ringCY, ringR, 0, Math.PI * 2);
+  ctx.strokeStyle = hexToRgba(hexCode, 0.5); ctx.lineWidth = s(3); ctx.stroke();
+  ctx.beginPath(); ctx.arc(ringCX, ringCY, ringR - s(5), 0, Math.PI * 2);
+  ctx.fillStyle = hexToRgba(hexCode, 0.25); ctx.fill();
+  ctx.beginPath(); ctx.arc(ringCX, ringCY, s(4), 0, Math.PI * 2);
+  ctx.fillStyle = hexCode; ctx.fill();
+  ctx.restore();
+
+  // ── Download ──────────────────────────────────────────────────────────────
+  const safeName = colorName.replace(/\s+/g, '-').replace(/[^A-Z0-9\-]/gi, '');
+  const filename  = `RazelStudio_${safeName}_${hexRaw}_compare.png`;
+  const a = document.createElement('a');
+  a.href     = out.toDataURL('image/png');
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setStatus(`⇆ <b>Comparison saved</b> ${filename}`);
 }
 
 // Helper: rounded rect path (supports per-corner radii array or single number)
@@ -1479,3 +1867,102 @@ document.addEventListener('keydown', e => {
     if (ov && ov.classList.contains('open')) { ov.classList.remove('open'); }
   }
 });
+
+/* ════════════════════════════════════════════════
+   AI SEGMENTATION (Transformers.js / ONNX)
+════════════════════════════════════════════════ */
+const TRANSFORMERS_VERSION = "2.16.1";
+let aiPipeline = null;
+
+async function runAISegmentation() {
+  if (!imgLoaded) { alert("Load a room photo first!"); return; }
+  
+  const btn1 = document.getElementById('btn-run-ai');
+  const btn2 = document.getElementById('btn-run-ai-tool');
+  const statusEl = document.getElementById('ai-status');
+  if (!statusEl) return;
+
+  if (btn1) btn1.disabled = true;
+  if (btn2) btn2.disabled = true;
+  zone.classList.add('loading'); 
+  
+  try {
+    if (!window.transformers) {
+      statusEl.innerHTML = "Downloading Core ML Library...<br><i>(First time only)</i>";
+      const module = await import(`https://cdn.jsdelivr.net/npm/@xenova/transformers@${TRANSFORMERS_VERSION}`);
+      window.transformers = module;
+      window.transformers.env.allowLocalModels = false;
+    }
+    
+    if (!aiPipeline) {
+      statusEl.innerHTML = "Downloading Segformer Model (14MB)...<br><i>(First time only)</i>";
+      aiPipeline = await window.transformers.pipeline(
+        'image-segmentation', 
+        'Xenova/segformer-b0-finetuned-ade-512-512',
+        { 
+          progress_callback: (prog) => {
+            if (prog.status === 'progress') {
+              statusEl.innerHTML = `Downloading Model: ${Math.round(prog.progress)}%`;
+            }
+          }
+        }
+      );
+    }
+    
+    statusEl.innerHTML = "🧠 Analyzing room geometry...";
+    
+    // Pass canvas data URL to the pipeline
+    const results = await aiPipeline(mainC.toDataURL('image/jpeg', 0.8));
+    
+    // ADE20k dataset has a specific class for "wall"
+    const wallRes = results.find(r => r.label === 'wall');
+    if (!wallRes) {
+      statusEl.innerHTML = "⚠️ No walls detected.";
+      if (btn1) btn1.disabled = false;
+      if (btn2) btn2.disabled = false;
+      zone.classList.remove('loading');
+      return;
+    }
+    
+    statusEl.innerHTML = "✨ Processing mask...";
+    const maskCanvas = wallRes.mask.toCanvas();
+    
+    // Scale mask from 512x512 back up to original image width x height
+    const W = mainC.width, H = mainC.height;
+    const tmpC = document.createElement('canvas');
+    tmpC.width = W; 
+    tmpC.height = H;
+    const tmpX = tmpC.getContext('2d');
+    
+    // Crucial fix: Disable anti-aliasing during upscale to prevent 
+    // the wall mask from creating a blurry glow that covers furniture edges.
+    tmpX.imageSmoothingEnabled = false;
+    tmpX.drawImage(maskCanvas, 0, 0, W, H);
+    
+    const imgData = tmpX.getImageData(0, 0, W, H).data;
+    
+    saveHistory(); // Save snapshot before overwrite
+    maskData = new Float32Array(W * H);
+    
+    // Segformer output mask values. We enforce a strict threshold 
+    // (> 128) so weak confidence fractional pixels don't bleed onto objects.
+    for (let i = 0; i < W * H; i++) {
+        maskData[i] = imgData[i * 4] > 128 ? 1.0 : 0.0;
+    }
+    
+    // Feather upscale artifacts to perfectly blend corners
+    applyMaskBlur(2.5);
+    redrawPaint();
+    
+    statusEl.innerHTML = "✅ Auto-Detect Complete!";
+    setStatus("🤖 <b>AI detected walls!</b> Adjust with Erase/Protect tools if needed.");
+
+  } catch (err) {
+    console.error("AI Error: ", err);
+    statusEl.innerHTML = "❌ Error: " + (err.message || 'Check console');
+  }
+  
+  if (btn1) btn1.disabled = false;
+  if (btn2) btn2.disabled = false;
+  zone.classList.remove('loading');
+}

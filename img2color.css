@@ -77,6 +77,29 @@ body::before {
 .hdr-btn:hover { background: rgba(45,212,191,.2); border-color: var(--teal); box-shadow: var(--glow-p); }
 .hdr-btn:disabled { opacity: .35; cursor: not-allowed; }
 
+/* Download split-button group */
+.dl-group {
+  display: flex; align-items: stretch;
+  border-radius: 8px; overflow: hidden;
+  border: 1px solid rgba(45,212,191,.3);
+  gap: 1px; background: rgba(45,212,191,.12);
+}
+.dl-group .hdr-btn {
+  border: none; border-radius: 0; background: transparent;
+}
+.dl-main   { border-right: 1px solid rgba(45,212,191,.25) !important; }
+.dl-compare {
+  background: rgba(124,58,237,.12) !important;
+  color: #c4b5fd !important;
+  border-left: 1px solid rgba(124,58,237,.25) !important;
+  padding: 7px 11px !important;
+}
+.dl-compare:hover {
+  background: rgba(124,58,237,.25) !important;
+  color: #ddd6fe !important;
+  box-shadow: var(--glow-p) !important;
+}
+
 /* ══════════════════════════════════════════════════
    BODY GRID — desktop
 ══════════════════════════════════════════════════ */
@@ -230,6 +253,33 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.3); }
 .sw { aspect-ratio:1; border-radius: 6px; cursor: pointer; border: 2px solid transparent; transition: transform .15s, border-color .15s, box-shadow .15s; }
 .sw:hover { transform: scale(1.18); z-index: 2; }
 .sw.sel   { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.15); transform: scale(1.14); }
+
+/* Recent colour history row */
+.recent-row {
+  align-items: center; gap: 8px;
+  margin: 8px 0 10px;
+  padding: 7px 10px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.recent-label {
+  font-family: 'Space Mono', monospace; font-size: .52rem;
+  letter-spacing: 2px; color: var(--muted); text-transform: uppercase;
+  flex-shrink: 0; white-space: nowrap;
+}
+.recent-swatches { display: flex; gap: 6px; flex-wrap: nowrap; }
+.rsw {
+  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  cursor: pointer; border: 2px solid transparent;
+  transition: transform .15s, border-color .15s, box-shadow .15s;
+  position: relative;
+}
+.rsw:hover {
+  transform: scale(1.22); z-index: 2;
+  border-color: rgba(255,255,255,.55);
+  box-shadow: 0 0 0 3px rgba(255,255,255,.10);
+}
 
 /* Settings sliders */
 .srow { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
@@ -592,5 +642,5 @@ kbd {
 /* Pan cursor */
 .canvas-zone.panning         { cursor: grabbing !important; }
 .canvas-zone.pan-ready       { cursor: grab !important; }
-/* Eyedrop cursor override */
-#main-canvas.eyedrop-mode    { cursor: crosshair !important; }
+/* Eyedrop cursor — handled via inline style in setTool() to allow SVG cursor */
+/* #main-canvas.eyedrop-mode cursor is set in JS */
