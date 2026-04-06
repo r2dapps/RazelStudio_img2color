@@ -7,6 +7,8 @@
   <title>Razel Studio — 3D Paint Visualizer</title>
   <meta name="description"
     content="Visualize wall paint colours and textures on your room photos with 3D perspective and soft-brush editing tools.">
+  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
   <link rel="stylesheet" href="img2color.css">
 </head>
 
@@ -21,12 +23,16 @@
       </div>
       <div class="header-actions">
         <span class="badge badge-engine">⬡ 3D Engine</span>
-        <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" id="btn-theme" title="Toggle light/dark theme">☀</button>
-        <button class="hdr-btn hdr-btn-icon" onclick="toggleFullscreen()" id="btn-fs" title="Fullscreen (F11)">⛶</button>
+        <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" id="btn-theme"
+          title="Toggle light/dark theme">☀</button>
+        <button class="hdr-btn hdr-btn-icon" onclick="toggleFullscreen()" id="btn-fs"
+          title="Fullscreen (F11)">⛶</button>
         <button class="hdr-btn hdr-btn-icon" onclick="toggleShortcuts()" title="Keyboard shortcuts (?)">⌨</button>
         <div class="dl-group">
-          <button class="hdr-btn dl-main" id="btn-download" onclick="downloadImage()" title="Download painted image">⬇ Download</button>
-          <button class="hdr-btn dl-compare" id="btn-compare-dl" onclick="downloadSideBySide()" title="Download side-by-side Before/After comparison">⇆ Compare</button>
+          <button class="hdr-btn dl-main" id="btn-download" onclick="downloadImage()" title="Download painted image">⬇
+            Download</button>
+          <button class="hdr-btn dl-compare" id="btn-compare-dl" onclick="downloadSideBySide()"
+            title="Download side-by-side Before/After comparison">⇆ Compare</button>
         </div>
       </div>
     </header>
@@ -69,8 +75,10 @@
               <div class="ba-divider" id="ba-divider">
                 <div class="ba-handle">
                   <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                    <circle cx="11" cy="11" r="10" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
-                    <path d="M7 11H4M18 11h-3M7 11l3-3M7 11l3 3M15 11l-3-3M15 11l-3 3" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="11" cy="11" r="10" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.9)"
+                      stroke-width="1.5" />
+                    <path d="M7 11H4M18 11h-3M7 11l3-3M7 11l3 3M15 11l-3-3M15 11l-3 3" stroke="white" stroke-width="1.6"
+                      stroke-linecap="round" stroke-linejoin="round" />
                   </svg>
                 </div>
                 <div class="ba-label ba-label-before">BEFORE</div>
@@ -93,12 +101,17 @@
 
           <!-- Tool buttons -->
           <div class="tg">
-            <button class="tbtn active" id="tbtn-sam-add" onclick="setTool('sam-add')" title="Add wall space (L Click)">➕ Add Area</button>
-            <button class="tbtn" id="tbtn-sam-sub" onclick="setTool('sam-sub')" title="Exclude objects (Shift+Click)">➖ Exclude</button>
-            <button class="tbtn" id="tbtn-flood" onclick="setTool('flood')" title="Classic flood fill (G)">🪣 Flood</button>
-            <button class="tbtn tbtn-eye" id="tbtn-eye" onclick="setTool('eyedrop')" title="Pick colour from image (I)">🔬 Pick</button>
+            <button class="tbtn active" id="tbtn-sam-add" onclick="setTool('sam-add')"
+              title="Add wall space (L Click)">➕ Add Area</button>
+            <button class="tbtn" id="tbtn-sam-sub" onclick="setTool('sam-sub')" title="Exclude objects (Shift+Click)">➖
+              Exclude</button>
+            <button class="tbtn" id="tbtn-flood" onclick="setTool('flood')" title="Classic flood fill (G)">🪣
+              Flood</button>
+            <button class="tbtn tbtn-eye" id="tbtn-eye" onclick="setTool('eyedrop')"
+              title="Pick colour from image (I)">🔬 Pick</button>
             <button class="tbtn" id="tbtn-clear" onclick="clearAll()" title="Reset all paint (Del)">↺ Reset</button>
-            <button class="tbtn tbtn-ba" id="tbtn-ba" onclick="toggleBeforeAfter()" title="Before / After comparison (B)">⇆ Compare</button>
+            <button class="tbtn tbtn-ba" id="tbtn-ba" onclick="toggleBeforeAfter()"
+              title="Before / After comparison (B)">⇆ Compare</button>
           </div>
 
           <div class="divider"></div>
@@ -144,7 +157,9 @@
           <div class="divider"></div>
 
           <!-- AI Auto-Detect -->
-          <button class="tbtn ai" id="btn-run-ai-tool" onclick="runAISegmentation()" style="border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15); color: #ddd6fe;" title="Auto-detect walls using AI">✦ Auto-Wall</button>
+          <button class="tbtn ai" id="btn-run-ai-tool" onclick="runAISegmentation()"
+            style="border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15); color: #ddd6fe;"
+            title="Auto-detect walls using AI">✦ Auto-Wall</button>
           <div class="divider"></div>
 
           <!-- Status -->
@@ -177,7 +192,8 @@
               <input type="color" id="color-input" value="#ff4d6d" oninput="setColor(this.value,'Custom')">
             </div>
             <div class="color-meta">
-              <input type="text" class="hex-input" id="chex" maxlength="7" value="#FF4D6D" onchange="setColor(this.value, 'Custom')">
+              <input type="text" class="hex-input" id="chex" maxlength="7" value="#FF4D6D"
+                onchange="setColor(this.value, 'Custom')">
               <div class="cname" id="cname">Coral Rouge</div>
             </div>
           </div>
@@ -255,25 +271,34 @@
           <p style="font-size: 0.75rem; color: var(--sub); margin-bottom: 12px; line-height: 1.4;">
             Automatically detect entire walls, or use the ➕/➖ tools to perfectly interact with objects.
           </p>
-          <button class="tbtn active" style="width: 100%; justify-content: center; padding: 12px; border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15);" onclick="runAISegmentation()" id="btn-run-ai">
-             🤖 Auto-Detect Walls
+          <button class="tbtn active"
+            style="width: 100%; justify-content: center; padding: 12px; border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15);"
+            onclick="runAISegmentation()" id="btn-run-ai">
+            🤖 Auto-Detect Walls
           </button>
-          
+
           <div class="divider" style="height:1px; width:100%; margin: 15px 0;"></div>
           <div class="sec-title">Interactive AI (SAM)</div>
-          
-          <div class="sam-status-card" id="sam-status-card" style="display:flex; align-items:center; gap:10px; background:var(--card); padding:10px; border-radius:8px; margin-bottom:10px;">
+
+          <div class="sam-status-card" id="sam-status-card"
+            style="display:flex; align-items:center; gap:10px; background:var(--card); padding:10px; border-radius:8px; margin-bottom:10px;">
             <div class="sam-status-icon" id="sam-status-icon" style="font-size:1.2rem;">⏳</div>
             <div class="sam-status-body">
-              <div class="sam-status-title" id="sam-status-title" style="font-weight:600; font-size:0.8rem; color:var(--text);">Initializing...</div>
-              <div class="sam-status-sub" id="sam-status-sub" style="font-size:0.7rem; color:var(--sub);">Readying neural network</div>
+              <div class="sam-status-title" id="sam-status-title"
+                style="font-weight:600; font-size:0.8rem; color:var(--text);">Initializing...</div>
+              <div class="sam-status-sub" id="sam-status-sub" style="font-size:0.7rem; color:var(--sub);">Readying
+                neural network</div>
             </div>
           </div>
-          <div class="sam-prog-wrap" id="sam-prog-wrap" style="height:4px; background:var(--border); border-radius:2px; overflow:hidden;">
-            <div class="sam-prog-bar" id="sam-prog-bar" style="width:0%; height:100%; background:var(--accent); transition:width 0.3s;"></div>
+          <div class="sam-prog-wrap" id="sam-prog-wrap"
+            style="height:4px; background:var(--border); border-radius:2px; overflow:hidden;">
+            <div class="sam-prog-bar" id="sam-prog-bar"
+              style="width:0%; height:100%; background:var(--accent); transition:width 0.3s;"></div>
           </div>
-          
-          <div id="ai-status" style="font-size: 0.72rem; color: var(--sub); margin-top: 10px; text-align: center; line-height: 1.4;"></div>
+
+          <div id="ai-status"
+            style="font-size: 0.72rem; color: var(--sub); margin-top: 10px; text-align: center; line-height: 1.4;">
+          </div>
         </div>
 
         <!-- Stub elements required by JS (keep even while AI is disabled) -->
@@ -287,7 +312,9 @@
         </div>
 
         <!-- Apply -->
-        <button class="apply-btn" id="apply-btn" disabled onclick="redrawPaint(); setStatus('<b>Settings applied</b> to painted area')" title="Re-render painted area with current colour, opacity, blend &amp; finish">
+        <button class="apply-btn" id="apply-btn" disabled
+          onclick="redrawPaint(); setStatus('<b>Settings applied</b> to painted area')"
+          title="Re-render painted area with current colour, opacity, blend &amp; finish">
           Apply Paint
         </button>
 

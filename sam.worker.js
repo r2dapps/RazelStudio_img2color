@@ -122,8 +122,9 @@ async function load() {
     console.log('[SAM Worker] Sessions ready!');
     post({ type:'ready' });
   } catch(err) {
+    let msg = err instanceof Error ? err.message : String(err);
     console.error('[SAM Worker] Critical load failure:', err);
-    post({ type:'error', message: err.message });
+    post({ type:'error', message: msg });
   }
 }
 
@@ -159,7 +160,9 @@ async function encode(imageData) {
 
     post({ type:'encoded', resizeW, resizeH, scale });
   } catch(err) {
-    post({ type:'error', message: 'Encode failed: ' + err.message });
+    let msg = err instanceof Error ? err.message : String(err);
+    console.error('[SAM Worker] Encode failed:', err);
+    post({ type:'error', message: 'Encode failed: ' + msg });
   }
 }
 
@@ -226,7 +229,9 @@ async function decode({ points, W, H }) {
 
     post({ type:'mask', data: sampledMask, W: origW, H: origH }, [sampledMask.buffer]);
   } catch(err) {
-    post({ type:'error', message: 'Decode failed: ' + err.message });
+    let msg = err instanceof Error ? err.message : String(err);
+    console.error('[SAM Worker] Decode failed:', err);
+    post({ type:'error', message: 'Decode failed: ' + msg });
   }
 }
 
