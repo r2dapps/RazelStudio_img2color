@@ -101,16 +101,25 @@ async function load() {
     }
 
     ortNamespace = self.ort;
-    console.log('[SAM Worker] ONNX runtime found!');
+    console.log('[SAM Worker] ONNX runtime found! Version:', ortNamespace.version);
     
-    // SAFE MODE: Disable SIMD and Multi-threading for maximum compatibility with 
-    // GitHub Pages and low-end mobile devices (prevents 11407312 memory errors).
+    // SAFE MODE: Hard-Disable all features that require SharedArrayBuffer / COOP headers.
+    ortNamespace.env.debug = true; 
     ortNamespace.env.wasm.numThreads = 1;      
     ortNamespace.env.wasm.simd       = false; 
+    ortNamespace.env.wasm.proxy      = false; // MUST be false inside a worker to prevent memory collisions
     
-    // Explicitly set WASM paths relative to worker root
-    ortNamespace.env.wasm.wasmPaths  = ''; 
+    // Explicitly set WASM paths to the root of your GitHub repo for 100% reliability.
+    // This removes the "undefined" and "11406..." errors caused by incorrect pathing.
+    const baseUrl = self.location.href.substring(0, self.location.href.lastIndexOf('/') + 1);
+    ortNamespace.env.wasm.wasmPaths = {
+        'ort-wasm-simd.wasm': baseUrl + 'ort-wasm-simd.wasm',
+        'ort-wasm.wasm':      baseUrl + 'ort-wasm.wasm',
+        'ort-wasm-threaded.wasm': baseUrl + 'ort-wasm-threaded.wasm' // just in case
+    };
     
+    console.log('[SAM Worker] Configured WASM paths:', ortNamespace.env.wasm.wasmPaths);
+
     post({ type:'progress', text:'Loading AI encoder (≈9 MB)…', pct:5 });
     const encBuf = await fetchWithProgress(ENC_URL, 'Encoder');
 
