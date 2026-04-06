@@ -275,21 +275,14 @@ function initCanvas(img) {
   imgLoaded = true;
   undoStack = []; redoStack = []; // reset history for new image
   updateUndoRedoBtns();
-  document.getElementById('drop-zone').style.display = 'none';
-  document.getElementById('canvas-inner').style.display = 'block';
-  document.getElementById('panel').style.display = 'flex';
-  document.getElementById('toolbar').style.display = 'flex';
+  document.getElementById('drop-zone').classList.add('hidden');
   document.getElementById('apply-btn').disabled = false;
-  
-  // Transition background logo
-  const logo = document.querySelector('.logo-mark');
-  if (logo) logo.style.opacity = '1';
-
+  // Show the "New Image" floating button now that a photo is loaded
+  const btnNew = document.getElementById('btn-new-image');
+  if (btnNew) btnNew.style.display = 'flex';
+  // Exit before/after mode if it was active
   if (baActive) toggleBeforeAfter();
-  setStatus(`<b>Image Loaded</b> · Pick a tool to refine walls`);
-  
-  // Trigger AI analysis if first time
-  if (samReady && !samEncoded) samEncodeWrapper();
+  setStatus(`<b>Image Loaded</b> (${W}x${H}px) · Click walls to paint`);
 }
 
 /* ════════════════════════════════════════════════
@@ -316,13 +309,19 @@ mainC.addEventListener('click', e => {
     setColor(hex, 'Sampled');
     document.getElementById('color-input').value = hex;
     setStatus(`🔬 <b>Picked</b> ${hex} from image`);
-    setTool('sam-add'); // auto-switch back to AI after picking
+    setTool('flood'); // auto-switch back to fill after picking
     return;
   }
 
-  // MobileSAM Interactive Taps
-  if (curTool === 'sam-add' || curTool === 'sam-sub') {
-    samDecodeInteractive(x, y, curTool === 'sam-add' ? 1 : 0);
+  // Polygon Pen Tap Handler
+  if (curTool === 'pen') {
+    if (penPoints.length > 2 && Math.hypot(x - penPoints[0].x, y - penPoints[0].y) < 20) {
+      fillPenPolygon();
+    } else {
+      penPoints.push({x, y});
+      drawProtectOverlay();
+      setStatus(`✒️ <b>Pen:</b> Click to outline area, click start point to finish`);
+    }
     return;
   }
 
@@ -341,6 +340,113 @@ mainC.addEventListener('click', e => {
       redrawPaint();
       setStatus(`<b>Filled</b> ${filled.toLocaleString()} pixels`);
     });
+  }
+});
+
+// ── Brush / Pen handlers ─────────────────────────────────────────────────────
+let isBrushing = false;
+let penPoints = [];
+let lastMouse = null;
+
+function getCanvasXY(e) {
+  const rect = mainC.getBoundingClientRect();
+  const sx = mainC.width  / rect.width;
+  const sy = mainC.height / rect.height;
+  const src = e.touches ? e.touches[0] : e;
+  return [
+    Math.round((src.clientX - rect.left) * sx),
+    Math.round((src.clientY - rect.top)  * sy)
+  ];
+}
+
+mainC.addEventListener('mousedown', e => {
+  if (!imgLoaded) return;
+  if (curTool === 'erase') {
+    saveHistory();
+    isBrushing = true;
+    applyBrushAt(e);
+  }
+});
+mainC.addEventListener('touchstart', e => {
+  if (e.touches.length === 1 && curTool === 'erase') {
+    saveHistory();
+    isBrushing = true;
+    applyBrushAt(e);
+  }
+}, {passive: false});
+
+window.addEventListener('mousemove', e => {
+  if (curTool === 'pen' && penPoints.length > 0) {
+    const [x, y] = getCanvasXY(e);
+    lastMouse = {x, y};
+    drawProtectOverlay();
+  }
+  if (curTool === 'erase') {
+    if (isBrushing) applyBrushAt(e);
+    drawBrushRing(e);
+  }
+});
+window.addEventListener('touchmove', e => {
+  if (e.touches.length === 1 && curTool === 'erase') {
+    if (isBrushing) {
+      e.preventDefault();
+      applyBrushAt(e);
+    }
+    drawBrushRing(e);
+  }
+}, {passive: false});
+
+window.addEventListener('mouseup', () => { isBrushing = false; });
+window.addEventListener('touchend', () => { isBrushing = false; });
+
+function applyBrushAt(e) {
+  const [x, y] = getCanvasXY(e);
+  const r = parseInt(document.getElementById('brush-size')?.value ?? 30);
+  if (curTool === 'erase') {
+    eraseAt(x, y, r);
+    redrawPaint();
+    setStatus(`🧹 <b>Erasing</b> paint — drag to remove more`);
+  }
+}
+
+function drawBrushRing(e) {
+  if (!imgLoaded) return;
+  const [x, y] = getCanvasXY(e);
+  const r = parseInt(document.getElementById('brush-size')?.value ?? 30);
+  const W = mainC.width, H = mainC.height;
+  overlayX.clearRect(0, 0, W, H);
+  drawProtectOverlay();
+  overlayX.save();
+  overlayX.beginPath();
+  overlayX.arc(x, y, r, 0, Math.PI * 2);
+  overlayX.strokeStyle = 'rgba(255,255,255,0.85)';
+  overlayX.lineWidth = 2;
+  overlayX.setLineDash([5, 3]);
+  overlayX.stroke();
+  overlayX.restore();
+}
+
+mainC.addEventListener('mouseleave', () => {
+  if (curTool === 'erase') {
+    overlayX.clearRect(0, 0, mainC.width, mainC.height);
+    drawProtectOverlay();
+    isBrushing = false;
+  }
+  if (curTool === 'pen') {
+    lastMouse = null;
+    drawProtectOverlay();
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (curTool === 'pen') {
+    if (e.key === 'Enter') fillPenPolygon();
+    if (e.key === 'Escape') {
+      penPoints = [];
+      lastMouse = null;
+      drawProtectOverlay();
+      setStatus(`✒️ <b>Pen:</b> Polygon cancelled.`);
+    }
   }
 });
 
@@ -445,66 +551,44 @@ function samLoad() {
   samWorker.onmessage = ({ data }) => {
     switch (data.type) {
       case 'progress':
-        const txt = data.text || 'Loading...';
-        const pct = data.pct || 0;
-        statusSub.textContent = txt + '...';
-        document.getElementById('sam-prog-bar').style.width = pct + '%';
-        
-        // Update Splash Screen
-        const splashTxt = document.getElementById('splash-status-txt');
-        const splashBar = document.getElementById('splash-bar-fill');
-        if (splashTxt) splashTxt.textContent = txt;
-        if (splashBar) splashBar.style.width = pct + '%';
+        statusSub.textContent = data.text;
+        document.getElementById('sam-prog-bar').style.width = (data.pct || 0) + '%';
         break;
-
       case 'ready':
         samReady = true;
         statusIcon.textContent = '✦';
-        statusTitle.textContent = 'System Ready';
-        statusSub.textContent = 'Smart mask analysis active';
+        statusTitle.textContent = 'MobileSAM Ready';
+        statusSub.textContent = 'Tap wall to add, tap object to exclude';
         document.getElementById('sam-prog-wrap').style.display = 'none';
-        
-        // Hide Splash Screen with a slight delay for flair
-        setTimeout(() => {
-            const splash = document.getElementById('splash-screen');
-            if (splash) splash.classList.add('hidden');
-        }, 800);
-
         if (imgLoaded) samEncodeWrapper();
         break;
       case 'encoded':
         samEncoded = true;
         samBusy = false;
         statusIcon.textContent = '✦';
-        statusSub.textContent = 'Image analyze complete';
+        statusSub.textContent = 'Target image embedded & ready to trace';
         break;
       case 'mask':
         samBusy = false;
         saveHistory();
-        const raw = data.data; 
+        const raw = data.data; // array at origW x origH
+        // Merge the mask (in this multipoint interaction, we replace the mask area 
+        // to respond cleanly to positive/negative clicks locally)
+        // A better UX for paint replaces the active tracking mask
         for (let i = 0; i < raw.length; i++) {
           if (raw[i]) maskData[i] = 1.0;
         }
         applyMaskBlur(1.5);
         redrawPaint();
-        setStatus(`Smart Mask Rendered`);
+        setStatus(`✦ <b>Smart Segment Rendered</b>`);
         break;
       case 'error':
         samBusy = false;
-        statusIcon.textContent = '❌';
-        statusTitle.textContent = 'AI Model Error';
+        statusIcon.textContent = '⚠️';
+        statusTitle.textContent = 'SAM Error';
         statusSub.textContent = data.message;
-        console.error('[AI Error]', data.message);
         break;
     }
-  };
-
-  samWorker.onerror = (err) => {
-    samBusy = false;
-    statusIcon.textContent = '❌';
-    statusTitle.textContent = 'Worker Crash';
-    statusSub.textContent = 'Browser blocked script or file missing';
-    console.error('[Worker Error]', err);
   };
   
   samWorker.postMessage({ type: 'load' });
@@ -527,21 +611,22 @@ function samEncodeWrapper() {
 
 function samDecodeInteractive(x, y, label) {
   if (!samReady) {
-    setStatus('⚠️ AI Engine is still starting up...');
+    setStatus('⚠️ MobileSAM is still loading, please wait.');
     return;
   }
   if (!samEncoded) {
-    setStatus('⚠️ Analyzing image contours (One-time process)...');
+    setStatus('⚠️ Analyzing image contours, please wait a moment.');
     return;
   }
   if (samBusy) return;
   samBusy = true;
   
-  // Safety timeout: Reset busy state after 10s if worker hangs
-  setTimeout(() => { if (samBusy) { samBusy = false; setStatus('AI timed out — try again'); } }, 10000);
+  setStatus('⏳ <b>AI is masking object...</b>');
   
-  setStatus('⏳ Smart Masking...');
+  // Add the user's point to the active session list
   samPoints.push({ x, y, label });
+  
+  // Wipe current mask before applying the new exact multipoint prediction
   maskData.fill(0); 
   
   samWorker.postMessage({ 
@@ -675,50 +760,81 @@ function eraseAt(cx, cy, r) {
   }
 }
 
-/* ── PROTECT BRUSH ──────────────────────────────────────────────────────
-   Paints pixels into objectMask so fill will never enter them.            */
-function applyProtectBrush(e) {
-  if (!imgLoaded) return;
-  const [x, y] = getCanvasXY(e);
-  if (x < 0 || y < 0 || x >= mainC.width || y >= mainC.height) return;
-  const r = parseInt(document.getElementById('brush-size')?.value || 30);
-  const W = mainC.width, H = mainC.height;
-  if (!objectMask) objectMask = new Uint8Array(W * H);
-  for (let dy = -r; dy <= r; dy++) {
-    for (let dx = -r; dx <= r; dx++) {
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      if (dist > r) continue;
-      const nx = x+dx, ny = y+dy;
-      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-      objectMask[ny * W + nx] = 1;
-      // Also soft-erase any paint already there
-      const idx = ny * W + nx;
-      maskData[idx] = Math.max(0, maskData[idx] - 0.3);
-    }
-  }
-  redrawPaint();
-  drawProtectOverlay();
-  setStatus('<b>Protected</b> — fill won\'t enter shaded areas');
-}
-
 // Render protected zones as a semi-transparent amber tint on the overlay canvas
 function drawProtectOverlay() {
   const W = mainC.width, H = mainC.height;
   overlayX.clearRect(0, 0, W, H);
-  if (!objectMask) return;
-  const img = new ImageData(W, H);
-  for (let i = 0; i < objectMask.length; i++) {
-    if (!objectMask[i]) continue;
-    const p = i * 4;
-    img.data[p]   = 255; // R
-    img.data[p+1] = 160; // G
-    img.data[p+2] = 0;   // B
-    img.data[p+3] = 55;  // A — subtle amber tint
+  if (objectMask) {
+    const img = new ImageData(W, H);
+    for (let i = 0; i < objectMask.length; i++) {
+        if (!objectMask[i]) continue;
+        const p = i * 4;
+        img.data[p]   = 255; // R
+        img.data[p+1] = 160; // G
+        img.data[p+2] = 0;   // B
+        img.data[p+3] = 55;  // A — subtle amber tint
+    }
+    overlayX.putImageData(img, 0, 0);
   }
-  overlayX.putImageData(img, 0, 0);
+  
+  if (penPoints.length > 0) {
+    overlayX.save();
+    overlayX.beginPath();
+    overlayX.moveTo(penPoints[0].x, penPoints[0].y);
+    for (let i = 1; i < penPoints.length; i++) {
+        overlayX.lineTo(penPoints[i].x, penPoints[i].y);
+    }
+    if (lastMouse) overlayX.lineTo(lastMouse.x, lastMouse.y);
+    overlayX.strokeStyle = 'rgba(255,160,0,0.9)';
+    overlayX.lineWidth = 2;
+    overlayX.stroke();
+    
+    overlayX.fillStyle = 'rgba(255,255,255,0.9)';
+    for (const p of penPoints) {
+        overlayX.beginPath();
+        overlayX.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        overlayX.fill();
+    }
+    overlayX.restore();
+  }
 }
 
-/* Duplicate protect listeners removed — handled by the combined listeners above */
+function fillPenPolygon() {
+  if (penPoints.length < 3) {
+    penPoints = [];
+    lastMouse = null;
+    drawProtectOverlay();
+    return;
+  }
+  
+  const W = mainC.width, H = mainC.height;
+  if (!objectMask) objectMask = new Uint8Array(W * H);
+  
+  const offC = new OffscreenCanvas(W, H);
+  const ctx = offC.getContext('2d', { willReadFrequently: true });
+  ctx.beginPath();
+  ctx.moveTo(penPoints[0].x, penPoints[0].y);
+  for (let i = 1; i < penPoints.length; i++) {
+    ctx.lineTo(penPoints[i].x, penPoints[i].y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "black";
+  ctx.fill();
+  
+  const imgData = ctx.getImageData(0, 0, W, H).data;
+  for (let i = 0; i < objectMask.length; i++) {
+    if (imgData[i * 4 + 3] > 0) {
+      objectMask[i] = 1;
+      maskData[i] = Math.max(0, maskData[i] - 0.3); // soft erase existing paint
+    }
+  }
+  
+  penPoints = [];
+  lastMouse = null;
+  drawProtectOverlay();
+  redrawPaint();
+  setStatus('🛡 <b>Protected</b> — Polygon area saved');
+}
 
 function clearAll() {
   if (!imgLoaded) return;
@@ -919,12 +1035,7 @@ const EYE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
 function setTool(t) {
   curTool = t;
   
-  // Implicitly boot SAM if user clicks the AI tools
-  if (t === 'sam-add' || t === 'sam-sub') {
-    samLoad();
-  }
-  
-  ['sam-add','sam-sub','flood','eye'].forEach(k => {
+  ['erase','protect','flood','eye'].forEach(k => {
     const b = document.getElementById('tbtn-' + (k === 'eye' ? 'eye' : k));
     if (b) b.classList.toggle('active', (k === 'eye' ? 'eyedrop' : k) === t);
   });
@@ -2027,7 +2138,7 @@ async function runAISegmentation() {
     redrawPaint();
     
     statusEl.innerHTML = "✅ Auto-Detect Complete!";
-    setStatus("🤖 <b>AI detected walls!</b> Refine with ➕ / ➖ tools if needed.");
+    setStatus("🤖 <b>AI detected walls!</b> Adjust with Erase/Protect tools if needed.");
 
   } catch (err) {
     console.error("AI Error: ", err);
@@ -2038,21 +2149,3 @@ async function runAISegmentation() {
   if (btn2) btn2.disabled = false;
   zone.classList.remove('loading');
 }
-
-// ── UI Helpers ───────────────────────────────────────────────────────────────
-function toggleAdvancedSettings() {
-    const content = document.querySelector('.adv-content');
-    const icon = document.getElementById('adv-icon');
-    if (content) {
-        const isShow = content.classList.toggle('show');
-        if (icon) icon.textContent = isShow ? '▲' : '▼';
-    }
-}
-
-// ── Auto-warm up MobileSAM on page load ──────────────────────────────────────
-window.addEventListener('load', () => {
-    // Delay slightly to prioritize UI performance
-    setTimeout(() => {
-        if (typeof samLoad === 'function') samLoad();
-    }, 1500);
-});

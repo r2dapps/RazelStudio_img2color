@@ -19,19 +19,17 @@
  */
 
 /* ── globals ──────────────────────────────────── */
-let ortNamespace = null;   // onnxruntime-web namespace
+let ort       = null;   // onnxruntime-web namespace
 let encSess   = null;   // encoder InferenceSession
 let decSess   = null;   // decoder InferenceSession
 let embedding = null;   // Float32Array [1,256,64,64]
 let origW = 0, origH = 0; // size of the image that was encoded
 
 /* ── CDN URLs ─────────────────────────────────── */
-// Use locally hosted ort.min.js (downloaded from CDN) — avoids network block issues
-// Use locally hosted ort.min.js — avoids network block issues
-const ORT_LOCAL = 'ort.min.js';
+const ORT_CDN   = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/ort.min.js';
 // MobileSAM weights hosted on HuggingFace (ONNX export)
-const ENC_URL   = 'https://huggingface.co/gifty-so/shoppy-mobilesam/resolve/main/mobile_sam_encoder.onnx';
-const DEC_URL   = 'https://huggingface.co/gifty-so/shoppy-mobilesam/resolve/main/mobile_sam_decoder.onnx';
+const ENC_URL   = 'https://huggingface.co/dhkim2810/MobileSAM/resolve/main/mobile_sam_encoder.onnx';
+const DEC_URL   = 'https://huggingface.co/dhkim2810/MobileSAM/resolve/main/mobile_sam_decoder.onnx';
 
 /* ── SAM constants ────────────────────────────── */
 const SAM_SIZE = 1024;   // encoder input resolution
@@ -88,55 +86,37 @@ function imageDataToRGB(imageData, W, H) {
    LOAD
 ════════════════════════════════════════════════ */
 async function load() {
-  console.log('[SAM Worker] Loading starting...');
   try {
-    post({ type:'progress', text:'Booting ONNX Runtime…', pct:0 });
+    post({ type:'progress', text:'Loading ONNX Runtime…', pct:0 });
 
-    // Load locally hosted ORT runtime — no external CDN required
-    console.log('[SAM Worker] Importing:', ORT_LOCAL);
-    importScripts(ORT_LOCAL);
+    // Dynamic import of ort inside worker
+    importScripts(ORT_CDN);
+    ort = self.ort;
+    ort.env.wasm.numThreads = 1;   // single-thread wasm inside worker
+    ort.env.wasm.simd       = true;
     
-    if (!self.ort) {
-        throw new Error('onnxruntime-web not found in self.ort after import');
-    }
-
-    ortNamespace = self.ort;
-    console.log('[SAM Worker] ONNX runtime found! Version:', ortNamespace.version);
-    
-    // SAFE MODE: Hard-Disable all features that require SharedArrayBuffer / COOP headers.
-    ortNamespace.env.debug = true; 
-    ortNamespace.env.wasm.numThreads = 1;      
-    ortNamespace.env.wasm.simd       = false; 
-    ortNamespace.env.wasm.proxy      = false; // MUST be false inside a worker to prevent memory collisions
-    
-    // Explicitly set WASM paths to the root of your GitHub repo for 100% reliability.
-    // This removes the "undefined" and "11406..." errors caused by incorrect pathing.
-    const baseUrl = self.location.href.substring(0, self.location.href.lastIndexOf('/') + 1);
-    ortNamespace.env.wasm.wasmPaths = {
-        'ort-wasm-simd.wasm': baseUrl + 'ort-wasm-simd.wasm',
-        'ort-wasm.wasm':      baseUrl + 'ort-wasm.wasm',
-        'ort-wasm-threaded.wasm': baseUrl + 'ort-wasm-threaded.wasm' // just in case
+    // CRITICAL: Must specify wasmPaths to fetch from CDN, otherwise it tries to fetch locally and 404s, throwing 11406520.
+    const cdnBase = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/';
+    ort.env.wasm.wasmPaths = {
+        'ort-wasm.wasm': cdnBase + 'ort-wasm.wasm',
+        'ort-wasm-simd.wasm': cdnBase + 'ort-wasm-simd.wasm',
+        'ort-wasm-threaded.wasm': cdnBase + 'ort-wasm-threaded.wasm'
     };
-    
-    console.log('[SAM Worker] Configured WASM paths:', ortNamespace.env.wasm.wasmPaths);
 
-    post({ type:'progress', text:'Loading AI encoder (≈9 MB)…', pct:5 });
+    post({ type:'progress', text:'Downloading encoder (≈9 MB)…', pct:5 });
     const encBuf = await fetchWithProgress(ENC_URL, 'Encoder');
 
-    post({ type:'progress', text:'Loading decoder weights (≈4 MB)…', pct:55 });
+    post({ type:'progress', text:'Downloading decoder (≈4 MB)…', pct:55 });
     const decBuf = await fetchWithProgress(DEC_URL, 'Decoder');
 
-    post({ type:'progress', text:'Warming up neural network…', pct:90 });
+    post({ type:'progress', text:'Initialising sessions…', pct:90 });
     const opts = { executionProviders: ['wasm'] };
-    encSess = await ortNamespace.InferenceSession.create(encBuf, opts);
-    decSess = await ortNamespace.InferenceSession.create(decBuf, opts);
+    encSess = await ort.InferenceSession.create(encBuf, opts);
+    decSess = await ort.InferenceSession.create(decBuf, opts);
 
-    console.log('[SAM Worker] Sessions ready!');
     post({ type:'ready' });
   } catch(err) {
-    let msg = err instanceof Error ? err.message : String(err);
-    console.error('[SAM Worker] Critical load failure:', err);
-    post({ type:'error', message: msg });
+    post({ type:'error', message: err.message });
   }
 }
 
@@ -163,7 +143,7 @@ async function encode(imageData) {
 
     post({ type:'progress', text:'Running image encoder…', pct:30 });
     const rgb    = imageDataToRGB(paddedData, SAM_SIZE, SAM_SIZE);
-    const tensor = new ortNamespace.Tensor('float32', rgb, [1, 3, SAM_SIZE, SAM_SIZE]);
+    const tensor = new ort.Tensor('float32', rgb, [1, 3, SAM_SIZE, SAM_SIZE]);
     const result = await encSess.run({ image: tensor });
 
     // Cache embedding — key name may be 'image_embeddings' or first output
@@ -172,9 +152,7 @@ async function encode(imageData) {
 
     post({ type:'encoded', resizeW, resizeH, scale });
   } catch(err) {
-    let msg = err instanceof Error ? err.message : String(err);
-    console.error('[SAM Worker] Encode failed:', err);
-    post({ type:'error', message: 'Encode failed: ' + msg });
+    post({ type:'error', message: 'Encode failed: ' + err.message });
   }
 }
 
@@ -203,11 +181,11 @@ async function decode({ points, W, H }) {
     labelsArray[numPoints-1] = -1;
 
     // SAM decoder inputs
-    const pointCoords = new ortNamespace.Tensor('float32', coordsArray, [1, numPoints, 2]);
-    const pointLabels = new ortNamespace.Tensor('float32', labelsArray, [1, numPoints]);
-    const maskInput   = new ortNamespace.Tensor('float32', new Float32Array(256 * 256),             [1, 1, 256, 256]);
-    const hasMask     = new ortNamespace.Tensor('float32', new Float32Array([0]),                   [1]);
-    const origSize    = new ortNamespace.Tensor('float32', new Float32Array([origH * scale, origW * scale]), [2]);
+    const pointCoords = new ort.Tensor('float32', coordsArray, [1, numPoints, 2]);
+    const pointLabels = new ort.Tensor('float32', labelsArray, [1, numPoints]);
+    const maskInput   = new ort.Tensor('float32', new Float32Array(256 * 256),             [1, 1, 256, 256]);
+    const hasMask     = new ort.Tensor('float32', new Float32Array([0]),                   [1]);
+    const origSize    = new ort.Tensor('float32', new Float32Array([origH * scale, origW * scale]), [2]);
 
     const feeds = {
       image_embeddings:    embedding,
@@ -241,9 +219,7 @@ async function decode({ points, W, H }) {
 
     post({ type:'mask', data: sampledMask, W: origW, H: origH }, [sampledMask.buffer]);
   } catch(err) {
-    let msg = err instanceof Error ? err.message : String(err);
-    console.error('[SAM Worker] Decode failed:', err);
-    post({ type:'error', message: 'Decode failed: ' + msg });
+    post({ type:'error', message: 'Decode failed: ' + err.message });
   }
 }
 
