@@ -3,349 +3,182 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Razel Studio — 3D Paint Visualizer</title>
-  <meta name="description"
-    content="Visualize wall paint colours and textures on your room photos with 3D perspective and soft-brush editing tools.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+  <title>Razel Studio — Premium AI Paint</title>
+  <meta name="description" content="Premium AI wall paint visualizer. Automatically detect walls and refine with interactive smart segmentation.">
   <link rel="icon" type="image/x-icon" href="favicon.ico">
-  <link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
   <link rel="stylesheet" href="img2color.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
 </head>
 
-<body>
-  <div class="shell">
+<body data-theme="dark">
 
-    <!-- ══ HEADER ════════════════════════════════════════════════════════════ -->
+  <!-- PREMIUM SPLASH SCREEN -->
+  <div class="splash-screen" id="splash-screen">
+    <div class="splash-logo">Razel Studio</div>
+    <div class="splash-loader-wrap">
+      <div class="splash-status-txt" id="splash-status-txt">Booting Neural Engine</div>
+      <div class="splash-bar-bg">
+        <div class="splash-bar-fill" id="splash-bar-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="shell">
+    <!-- HEADER -->
     <header class="header">
       <div class="logo">
         <span class="logo-mark">Razel Studio</span>
-        <span class="logo-sub">3D Visualizer</span>
       </div>
       <div class="header-actions">
-        <span class="badge badge-engine">⬡ 3D Engine</span>
-        <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" id="btn-theme"
-          title="Toggle light/dark theme">☀</button>
-        <button class="hdr-btn hdr-btn-icon" onclick="toggleFullscreen()" id="btn-fs"
-          title="Fullscreen (F11)">⛶</button>
-        <button class="hdr-btn hdr-btn-icon" onclick="toggleShortcuts()" title="Keyboard shortcuts (?)">⌨</button>
+        <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" id="btn-theme" title="Toggle Theme">☀</button>
+        <button class="hdr-btn hdr-btn-icon" onclick="toggleFullscreen()" id="btn-fs" title="Fullscreen">⛶</button>
         <div class="dl-group">
-          <button class="hdr-btn dl-main" id="btn-download" onclick="downloadImage()" title="Download painted image">⬇
-            Download</button>
-          <button class="hdr-btn dl-compare" id="btn-compare-dl" onclick="downloadSideBySide()"
-            title="Download side-by-side Before/After comparison">⇆ Compare</button>
+          <button class="hdr-btn dl-main" id="btn-download" onclick="downloadImage()">⬇ Download</button>
+          <button class="hdr-btn dl-compare" id="btn-compare-dl" onclick="downloadSideBySide()">⇆ Compare</button>
         </div>
       </div>
     </header>
 
-    <!-- ══ BODY ══════════════════════════════════════════════════════════════ -->
     <div class="body">
-
-      <!-- ── WORKSPACE (left / top) ──────────────────────────────────────── -->
+      <!-- WORKSPACE -->
       <div class="workspace">
-
-        <!-- Canvas zone -->
         <div class="canvas-zone" id="canvas-zone">
-
-          <!-- Drop zone -->
+          <!-- Drop Zone -->
           <div class="drop-zone" id="drop-zone">
             <div class="drop-icon-wrap">🏠</div>
             <div class="drop-title">Drop Your Room Photo</div>
-            <p class="drop-sub">Upload a room image and click any wall to fill it with colour.</p>
+            <p class="drop-sub">AI automatically segments your walls. Click any surface to paint.</p>
             <div class="drop-actions">
-              <button class="btn-upload" onclick="document.getElementById('file-input').click()">📁 Choose
-                Photo</button>
-              <button class="btn-upload btn-camera" onclick="document.getElementById('camera-input').click()">📷 Take
-                Photo</button>
+              <button class="btn-upload" onclick="document.getElementById('file-input').click()">📁 Choose Photo</button>
             </div>
             <input type="file" id="file-input" accept="image/*" style="display:none" onchange="handleFile(event)">
-            <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none"
-              onchange="handleFile(event)">
           </div>
 
-          <!-- Canvas layers (wrapped for zoom/pan) -->
-          <div id="canvas-inner">
+          <!-- Canvas Layers -->
+          <div id="canvas-inner" style="display:none">
             <canvas id="main-canvas"></canvas>
             <canvas id="paint-canvas"></canvas>
             <canvas id="overlay-canvas"></canvas>
-            <svg id="anno-svg"></svg>
-
-            <!-- Before / After comparison slider — INSIDE canvas-inner so zoom/pinch stays in sync -->
             <div class="ba-slider" id="ba-slider" style="display:none">
               <canvas id="ba-canvas"></canvas>
-              <div class="ba-divider" id="ba-divider">
-                <div class="ba-handle">
-                  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                    <circle cx="11" cy="11" r="10" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.9)"
-                      stroke-width="1.5" />
-                    <path d="M7 11H4M18 11h-3M7 11l3-3M7 11l3 3M15 11l-3-3M15 11l-3 3" stroke="white" stroke-width="1.6"
-                      stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </div>
-                <div class="ba-label ba-label-before">BEFORE</div>
-                <div class="ba-label ba-label-after">AFTER</div>
-              </div>
+              <div class="ba-divider" id="ba-divider"><div class="ba-handle">↔️</div></div>
             </div>
           </div>
 
-          <!-- Upload New Image button — visible once a photo is loaded -->
-          <button class="btn-new-image" id="btn-new-image" style="display:none"
-            onclick="document.getElementById('file-input-new').click()" title="Load a different room photo">
-            📁 New Image
-          </button>
-          <input type="file" id="file-input-new" accept="image/*" style="display:none" onchange="handleFile(event)">
-
-        </div><!-- /canvas-zone -->
-
-        <!-- ── TOOLBAR ───────────────────────────────────────────────────── -->
-        <div class="toolbar">
-
-          <!-- Tool buttons -->
-          <div class="tg">
-            <button class="tbtn active" id="tbtn-sam-add" onclick="setTool('sam-add')"
-              title="Add wall space (L Click)">➕ Add Area</button>
-            <button class="tbtn" id="tbtn-sam-sub" onclick="setTool('sam-sub')" title="Exclude objects (Shift+Click)">➖
-              Exclude</button>
-            <button class="tbtn" id="tbtn-flood" onclick="setTool('flood')" title="Classic flood fill (G)">🪣
-              Flood</button>
-            <button class="tbtn tbtn-eye" id="tbtn-eye" onclick="setTool('eyedrop')"
-              title="Pick colour from image (I)">🔬 Pick</button>
-            <button class="tbtn" id="tbtn-clear" onclick="clearAll()" title="Reset all paint (Del)">↺ Reset</button>
-            <button class="tbtn tbtn-ba" id="tbtn-ba" onclick="toggleBeforeAfter()"
-              title="Before / After comparison (B)">⇆ Compare</button>
-          </div>
-
-          <div class="divider"></div>
-
-          <!-- Undo / Redo -->
-          <div class="tg">
-            <button class="tbtn" id="tbtn-undo" onclick="undo()" title="Undo (Ctrl+Z)">↩ Undo</button>
-            <button class="tbtn" id="tbtn-redo" onclick="redo()" title="Redo (Ctrl+Y)">↪ Redo</button>
-          </div>
-
-          <div class="divider"></div>
-
-          <!-- Zoom controls -->
-          <div class="tg">
-            <button class="tbtn" onclick="zoomStep(1.25)" title="Zoom In (+)">＋</button>
-            <span class="zoom-label" id="zoom-label">100%</span>
-            <button class="tbtn" onclick="zoomStep(0.8)" title="Zoom Out (-)">－</button>
-            <button class="tbtn" onclick="zoomReset()" title="Fit to screen (0)">⊡ Fit</button>
-          </div>
-
-          <div class="divider"></div>
-          <div class="tol-row">
-            <label>Tolerance</label>
-            <input type="range" id="tol" min="5" max="80" value="20"
-              oninput="document.getElementById('tv').textContent=this.value">
-            <span class="tval" id="tv">20</span>
-          </div>
-          <div class="divider"></div>
-          <div class="tol-row">
-            <label>Edge</label>
-            <input type="range" id="edge-tol" min="5" max="80" value="28"
-              oninput="document.getElementById('ev').textContent=this.value">
-            <span class="tval" id="ev">28</span>
-          </div>
-          <div class="divider"></div>
-          <div class="tol-row">
-            <label>Brush</label>
-            <input type="range" id="brush-size" min="5" max="80" value="30"
-              oninput="document.getElementById('bv').textContent=this.value">
-            <span class="tval" id="bv">30</span>
-          </div>
-
-          <div class="divider"></div>
-
-          <!-- AI Auto-Detect -->
-          <button class="tbtn ai" id="btn-run-ai-tool" onclick="runAISegmentation()"
-            style="border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15); color: #ddd6fe;"
-            title="Auto-detect walls using AI">✦ Auto-Wall</button>
-          <div class="divider"></div>
-
-          <!-- Status -->
-          <div class="status-dot-wrap">
-            <div class="sdot"></div>
-            <span class="status-txt" id="status-txt"><b>Upload</b> a room photo to begin</span>
-          </div>
-
-        </div><!-- /toolbar -->
-
-      </div><!-- /workspace -->
-
-      <!-- ── RIGHT PANEL ────────────────────────────────────────────────── -->
-      <div class="panel" id="panel">
-
-        <!-- Mobile tab strip (hidden on desktop) -->
-        <div class="mob-tabs">
-          <button class="mob-tab active" data-tab="color" onclick="switchTab('color')">🎨 Color</button>
-          <button class="mob-tab" data-tab="settings" onclick="switchTab('settings')">⚙ Settings</button>
-          <button class="mob-tab" data-tab="texture" onclick="switchTab('texture')">🖼 Texture</button>
-          <button class="mob-tab" data-tab="view" onclick="switchTab('view')">◈ View</button>
-          <button class="mob-tab" data-tab="ai" onclick="switchTab('ai')">✦ AI Detect</button>
-        </div>
-
-        <!-- 1. Color ───────────────────────────────────────────── -->
-        <div class="sec tab-pane active" data-pane="color">
-          <div class="sec-title">🎨 Paint Color</div>
-          <div class="active-color-row">
-            <div class="color-swatch-big" id="csb" style="background:#ff4d6d">
-              <input type="color" id="color-input" value="#ff4d6d" oninput="setColor(this.value,'Custom')">
-            </div>
-            <div class="color-meta">
-              <input type="text" class="hex-input" id="chex" maxlength="7" value="#FF4D6D"
-                onchange="setColor(this.value, 'Custom')">
-              <div class="cname" id="cname">Coral Rouge</div>
-            </div>
-          </div>
-
-          <!-- Recent colour history -->
-          <div class="recent-row" id="recent-row" style="display:none">
-            <div class="recent-label">◈ RECENT</div>
-            <div class="recent-swatches" id="recent-swatches"></div>
-          </div>
-
-          <div class="palette" id="palette"></div>
-        </div>
-
-        <!-- 2. Settings ────────────────────────────────────────── -->
-        <div class="sec tab-pane" data-pane="settings">
-          <div class="sec-title">⚙ Paint Settings</div>
-          <div class="srow">
-            <label>Opacity</label>
-            <input type="range" id="sl-op" min="20" max="100" value="80" oninput="onOp(this.value)">
-            <span class="sv" id="sv-op">80%</span>
-          </div>
-          <div class="srow">
-            <label>Blend</label>
-            <input type="range" id="sl-bl" min="0" max="100" value="35" oninput="onBl(this.value)">
-            <span class="sv" id="sv-bl">35%</span>
-          </div>
-          <div class="srow" style="align-items:flex-start;flex-direction:column;gap:10px;margin-top:14px">
-            <div class="sec-title" style="margin-bottom:0;font-size:.6rem">✦ Finish Type</div>
-            <div class="finish-chips" id="finish-chips">
-              <div class="fchip active" onclick="setFinish(this,'matte')">Matte</div>
-              <div class="fchip" onclick="setFinish(this,'eggshell')">Eggshell</div>
-              <div class="fchip" onclick="setFinish(this,'satin')">Satin</div>
-              <div class="fchip" onclick="setFinish(this,'gloss')">High Gloss</div>
+          <!-- Floating Toolbar (Left) -->
+          <div class="toolbar" id="toolbar" style="display:none">
+            <div class="tg">
+               <button class="tbtn active" id="tbtn-sam-add" onclick="setTool('sam-add')" title="Add Wall Area">➕</button>
+               <button class="tbtn" id="tbtn-sam-sub" onclick="setTool('sam-sub')" title="Exclude Object">➖</button>
+               <button class="tbtn" id="tbtn-flood" onclick="setTool('flood')" title="Flood Fill">🪣</button>
+               <button class="tbtn" id="tbtn-eye" onclick="setTool('eyedrop')" title="Pick Color">🔬</button>
+               <button class="tbtn" onclick="clearAll()" title="Reset All">↺</button>
+               <button class="tbtn" onclick="toggleBeforeAfter()" title="Compare">⇆</button>
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- 3. Texture ─────────────────────────────────────────── -->
-        <div class="sec tab-pane" data-pane="texture">
-          <div class="sec-title">🖼 Wall Texture</div>
-          <div class="mode-toggle">
-            <div class="mtbtn active" id="mode-color" onclick="setMode('color')">🎨 Color</div>
-            <div class="mtbtn" id="mode-texture" onclick="setMode('texture')">🖼 Texture</div>
-          </div>
-          <div class="tex-upload-row">
-            <button class="tex-upload-btn" onclick="document.getElementById('tex-file-input').click()">⬆ Upload
-              Texture</button>
-            <img class="tex-preview" id="tex-preview" alt="texture preview">
-            <span class="tex-name" id="tex-name">No texture loaded</span>
-            <input type="file" id="tex-file-input" accept="image/*" style="display:none" onchange="loadTexture(event)">
-          </div>
-          <div class="tex-scale-row">
-            <label>Scale</label>
-            <input type="range" id="sl-tex-scale" min="5" max="100" value="25" oninput="onTexScale(this.value)">
-            <span class="sv" id="sv-tex-scale">25%</span>
-          </div>
-          <div class="sec-title" style="font-size:.58rem;margin-bottom:8px">◈ Preset Patterns</div>
-          <div class="preset-tex-grid" id="preset-tex-grid"></div>
-        </div>
-
-        <!-- 4. 3D View ──────────────────────────────────────────── -->
-        <div class="sec tab-pane" data-pane="view">
-          <div class="sec-title">◈ 3D Perspective</div>
-          <div class="view-grid">
-            <div class="vbtn active" onclick="setView(this,'front')">Front</div>
-            <div class="vbtn" onclick="setView(this,'left')">Left</div>
-            <div class="vbtn" onclick="setView(this,'right')">Right</div>
-            <div class="vbtn" onclick="setView(this,'tilt')">Tilt Up</div>
-          </div>
-        </div>
-
-        <!-- 5. AI Segmentation ──────────────────────────────────────────── -->
-        <div class="sec tab-pane" data-pane="ai">
-          <div class="sec-title">✦ AI Segmentation</div>
-          <p style="font-size: 0.75rem; color: var(--sub); margin-bottom: 12px; line-height: 1.4;">
-            Automatically detect entire walls, or use the ➕/➖ tools to perfectly interact with objects.
-          </p>
-          <button class="tbtn active"
-            style="width: 100%; justify-content: center; padding: 12px; border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15);"
-            onclick="runAISegmentation()" id="btn-run-ai">
+      <!-- FLOATING PANEL (Right) -->
+      <div class="panel" id="panel" style="display:none">
+        
+        <!-- AUTO-WALL SECTION -->
+        <div class="sec">
+          <div class="sec-title">✦ Smart Actions</div>
+          <button class="tbtn ai" onclick="runAISegmentation()" style="width:100%; justify-content:center; background:rgba(124,58,237,0.1); border:1px solid rgba(124,58,237,0.3); color:#a78bfa; margin-bottom:12px;">
             🤖 Auto-Detect Walls
           </button>
-
-          <div class="divider" style="height:1px; width:100%; margin: 15px 0;"></div>
-          <div class="sec-title">Interactive AI (SAM)</div>
-
-          <div class="sam-status-card" id="sam-status-card"
-            style="display:flex; align-items:center; gap:10px; background:var(--card); padding:10px; border-radius:8px; margin-bottom:10px;">
-            <div class="sam-status-icon" id="sam-status-icon" style="font-size:1.2rem;">⏳</div>
-            <div class="sam-status-body">
-              <div class="sam-status-title" id="sam-status-title"
-                style="font-weight:600; font-size:0.8rem; color:var(--text);">Initializing...</div>
-              <div class="sam-status-sub" id="sam-status-sub" style="font-size:0.7rem; color:var(--sub);">Readying
-                neural network</div>
+          
+          <div class="sam-status-card" style="background:rgba(255,255,255,0.03); padding:12px; border-radius:12px; border:1px solid var(--border);">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                <div id="sam-status-icon">✦</div>
+                <div id="sam-status-title" style="font-weight:700; font-size:0.8rem;">AI ENGINE READY</div>
+            </div>
+            <div id="sam-status-sub" style="font-size:0.7rem; color:var(--sub); margin-bottom:8px;">Smart masking active</div>
+            <div class="sam-prog-wrap" id="sam-prog-wrap" style="height:4px; background:rgba(0,0,0,0.2); border-radius:10px; overflow:hidden; display:none;">
+                <div class="sam-prog-bar" id="sam-prog-bar" style="width:0%; height:100%; background:var(--accent); transition:width 0.3s;"></div>
             </div>
           </div>
-          <div class="sam-prog-wrap" id="sam-prog-wrap"
-            style="height:4px; background:var(--border); border-radius:2px; overflow:hidden;">
-            <div class="sam-prog-bar" id="sam-prog-bar"
-              style="width:0%; height:100%; background:var(--accent); transition:width 0.3s;"></div>
-          </div>
-
-          <div id="ai-status"
-            style="font-size: 0.72rem; color: var(--sub); margin-top: 10px; text-align: center; line-height: 1.4;">
-          </div>
         </div>
 
-        <!-- Stub elements required by JS (keep even while AI is disabled) -->
-        <div style="display:none">
-          <div id="ai-load"></div>
-          <div id="ai-result"></div>
-          <div id="ai-room"></div>
-          <div id="ai-sum"></div>
-          <div id="wall-chips"></div>
-          <div id="obj-chips"></div>
+        <div class="divider" style="height:1px; background:var(--border); margin:0 16px;"></div>
+
+        <!-- COLOR SECTION -->
+        <div class="sec">
+          <div class="sec-title">🎨 Premium Palette</div>
+          <div class="active-color-row" style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+            <div id="csb" style="width:48px; height:48px; border-radius:12px; background:#ff4d6d; position:relative; overflow:hidden;">
+              <input type="color" id="color-input-real" style="position:absolute; inset:-10px; cursor:pointer;" value="#ff4d6d" oninput="setColor(this.value,'Custom')">
+            </div>
+            <div style="flex:1">
+              <input type="text" class="hex-input" id="chex" style="background:transparent; border:none; color:var(--text); font-weight:800; font-size:1.1rem; width:100%" value="#FF4D6D" onchange="setColor(this.value, 'Custom')">
+              <div id="cname" style="font-size:0.7rem; color:var(--sub);">Coral Rouge</div>
+            </div>
+          </div>
+          <div class="palette" id="palette" style="display:grid; grid-template-columns:repeat(6, 1fr); gap:6px;"></div>
         </div>
 
-        <!-- Apply -->
-        <button class="apply-btn" id="apply-btn" disabled
-          onclick="redrawPaint(); setStatus('<b>Settings applied</b> to painted area')"
-          title="Re-render painted area with current colour, opacity, blend &amp; finish">
-          Apply Paint
+        <!-- SETTINGS SECTION -->
+        <div class="sec">
+           <div class="srow" style="margin-bottom:12px;">
+             <label style="font-size:0.7rem; color:var(--sub);">OPACITY</label>
+             <input type="range" id="sl-op" min="20" max="100" value="80" oninput="onOp(this.value)" style="width:100%">
+           </div>
+           <div class="srow">
+             <label style="font-size:0.7rem; color:var(--sub);">SHADOW BLEND</label>
+             <input type="range" id="sl-bl" min="0" max="100" value="35" oninput="onBl(this.value)" style="width:100%">
+           </div>
+        </div>
+
+        <!-- ADVANCED DROP (Phase 3 requirement) -->
+        <div class="adv-toggle" onclick="toggleAdvancedSettings()">
+            <span>ADVANCED CONTROLS</span>
+            <span id="adv-icon">▼</span>
+        </div>
+        <div class="adv-content">
+            <div class="srow" style="margin-top:10px;">
+                <label style="font-size:0.6rem;">EDGE SOFTNESS</label>
+                <input type="range" min="0" max="10" value="2" style="width:100%">
+            </div>
+            <div class="srow" style="margin-top:10px;">
+                <label style="font-size:0.6rem;">FLOOD TOLERANCE</label>
+                <input type="range" min="1" max="100" value="25" style="width:100%">
+            </div>
+        </div>
+
+        <div style="flex:1"></div>
+
+        <button class="apply-btn" id="apply-btn" onclick="redrawPaint()" style="margin:16px; background:var(--accent); color:white; border:none; padding:14px; border-radius:12px; font-weight:800; cursor:pointer;">
+          APPLY CHANGES
         </button>
 
-      </div><!-- /panel -->
-    </div><!-- /body -->
-  </div><!-- /shell -->
-
-  <script src="img2color.js"></script>
-
-  <!-- Keyboard shortcuts overlay -->
-  <div class="shortcuts-overlay" id="shortcuts-overlay" onclick="toggleShortcuts()">
-    <div class="shortcuts-card" onclick="event.stopPropagation()">
-      <div class="shortcuts-title">⌨ Keyboard Shortcuts</div>
-      <div class="shortcuts-grid">
-        <div class="sk-row"><kbd>F</kbd><span>Fill tool</span></div>
-        <div class="sk-row"><kbd>E</kbd><span>Erase tool</span></div>
-        <div class="sk-row"><kbd>P</kbd><span>Protect tool</span></div>
-        <div class="sk-row"><kbd>I</kbd><span>Eyedropper / Pick color</span></div>
-        <div class="sk-row"><kbd>B</kbd><span>Before / After compare</span></div>
-        <div class="sk-row"><kbd>Del</kbd><span>Reset all paint</span></div>
-        <div class="sk-row"><kbd>Ctrl Z</kbd><span>Undo</span></div>
-        <div class="sk-row"><kbd>Ctrl Y</kbd><span>Redo</span></div>
-        <div class="sk-row"><kbd>+</kbd><span>Zoom in</span></div>
-        <div class="sk-row"><kbd>−</kbd><span>Zoom out</span></div>
-        <div class="sk-row"><kbd>0</kbd><span>Fit to screen</span></div>
-        <div class="sk-row"><kbd>Space</kbd><span>Hold to pan canvas</span></div>
-        <div class="sk-row"><kbd>F11</kbd><span>Fullscreen</span></div>
-        <div class="sk-row"><kbd>?</kbd><span>This panel</span></div>
       </div>
-      <button class="shortcuts-close" onclick="toggleShortcuts()">Close</button>
+    </div>
+    
+    <!-- STATUS BAR -->
+    <div id="status-bar" style="position:fixed; bottom:0; left:0; right:0; background:var(--bg); border-top:1px solid var(--border); padding:4px 20px; font-size:0.6rem; color:var(--sub); display:flex; justify-content:space-between; z-index:500;">
+       <div id="status-txt">Welcome to Razel Studio</div>
+       <div>V3.0 PRODUCTION</div>
     </div>
   </div>
 
+  <!-- Stub elements for code compatibility -->
+  <div style="display:none">
+    <div id="sam-prog-wrap-dummy"></div>
+    <div id="ai-status"></div>
+    <div id="recent-row"></div>
+    <div id="recent-swatches"></div>
+    <div id="preset-tex-grid"></div>
+    <div id="sl-tex-scale"></div>
+    <div id="tex-preview"></div>
+    <div id="tex-name"></div>
+    <div id="finish-chips"></div>
+    <div id="shortcuts-overlay"></div>
+  </div>
+
+  <script src="img2color.js"></script>
+</body>
 </html>

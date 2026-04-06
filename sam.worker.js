@@ -103,12 +103,15 @@ async function load() {
     ortNamespace = self.ort;
     console.log('[SAM Worker] ONNX runtime found!');
     
-    ortNamespace.env.wasm.numThreads = 1;   // single-thread wasm inside worker
-    ortNamespace.env.wasm.simd       = true;
-    // Point WASM resolver to local files (same directory as sam.worker.js)
-    ortNamespace.env.wasm.wasmPaths  = { 'ort-wasm-simd.wasm': './ort-wasm-simd.wasm', 'ort-wasm.wasm': './ort-wasm.wasm' };
-
-    post({ type:'progress', text:'Loading encoder weights (≈9 MB)…', pct:5 });
+    // SAFE MODE: Disable SIMD and Multi-threading for maximum compatibility with 
+    // GitHub Pages and low-end mobile devices (prevents 11407312 memory errors).
+    ortNamespace.env.wasm.numThreads = 1;      
+    ortNamespace.env.wasm.simd       = false; 
+    
+    // Explicitly set WASM paths relative to worker root
+    ortNamespace.env.wasm.wasmPaths  = ''; 
+    
+    post({ type:'progress', text:'Loading AI encoder (≈9 MB)…', pct:5 });
     const encBuf = await fetchWithProgress(ENC_URL, 'Encoder');
 
     post({ type:'progress', text:'Loading decoder weights (≈4 MB)…', pct:55 });

@@ -275,14 +275,21 @@ function initCanvas(img) {
   imgLoaded = true;
   undoStack = []; redoStack = []; // reset history for new image
   updateUndoRedoBtns();
-  document.getElementById('drop-zone').classList.add('hidden');
+  document.getElementById('drop-zone').style.display = 'none';
+  document.getElementById('canvas-inner').style.display = 'block';
+  document.getElementById('panel').style.display = 'flex';
+  document.getElementById('toolbar').style.display = 'flex';
   document.getElementById('apply-btn').disabled = false;
-  // Show the "New Image" floating button now that a photo is loaded
-  const btnNew = document.getElementById('btn-new-image');
-  if (btnNew) btnNew.style.display = 'flex';
-  // Exit before/after mode if it was active
+  
+  // Transition background logo
+  const logo = document.querySelector('.logo-mark');
+  if (logo) logo.style.opacity = '1';
+
   if (baActive) toggleBeforeAfter();
-  setStatus(`<b>Image Loaded</b> (${W}x${H}px) · Click walls to paint`);
+  setStatus(`<b>Image Loaded</b> · Pick a tool to refine walls`);
+  
+  // Trigger AI analysis if first time
+  if (samReady && !samEncoded) samEncodeWrapper();
 }
 
 /* ════════════════════════════════════════════════
@@ -438,15 +445,31 @@ function samLoad() {
   samWorker.onmessage = ({ data }) => {
     switch (data.type) {
       case 'progress':
-        statusSub.textContent = data.text + '...';
-        document.getElementById('sam-prog-bar').style.width = (data.pct || 0) + '%';
+        const txt = data.text || 'Loading...';
+        const pct = data.pct || 0;
+        statusSub.textContent = txt + '...';
+        document.getElementById('sam-prog-bar').style.width = pct + '%';
+        
+        // Update Splash Screen
+        const splashTxt = document.getElementById('splash-status-txt');
+        const splashBar = document.getElementById('splash-bar-fill');
+        if (splashTxt) splashTxt.textContent = txt;
+        if (splashBar) splashBar.style.width = pct + '%';
         break;
+
       case 'ready':
         samReady = true;
         statusIcon.textContent = '✦';
         statusTitle.textContent = 'System Ready';
         statusSub.textContent = 'Smart mask analysis active';
         document.getElementById('sam-prog-wrap').style.display = 'none';
+        
+        // Hide Splash Screen with a slight delay for flair
+        setTimeout(() => {
+            const splash = document.getElementById('splash-screen');
+            if (splash) splash.classList.add('hidden');
+        }, 800);
+
         if (imgLoaded) samEncodeWrapper();
         break;
       case 'encoded':
@@ -2004,7 +2027,7 @@ async function runAISegmentation() {
     redrawPaint();
     
     statusEl.innerHTML = "✅ Auto-Detect Complete!";
-    setStatus("🤖 <b>AI detected walls!</b> Adjust with Erase/Protect tools if needed.");
+    setStatus("🤖 <b>AI detected walls!</b> Refine with ➕ / ➖ tools if needed.");
 
   } catch (err) {
     console.error("AI Error: ", err);
@@ -2015,3 +2038,21 @@ async function runAISegmentation() {
   if (btn2) btn2.disabled = false;
   zone.classList.remove('loading');
 }
+
+// ── UI Helpers ───────────────────────────────────────────────────────────────
+function toggleAdvancedSettings() {
+    const content = document.querySelector('.adv-content');
+    const icon = document.getElementById('adv-icon');
+    if (content) {
+        const isShow = content.classList.toggle('show');
+        if (icon) icon.textContent = isShow ? '▲' : '▼';
+    }
+}
+
+// ── Auto-warm up MobileSAM on page load ──────────────────────────────────────
+window.addEventListener('load', () => {
+    // Delay slightly to prioritize UI performance
+    setTimeout(() => {
+        if (typeof samLoad === 'function') samLoad();
+    }, 1500);
+});
