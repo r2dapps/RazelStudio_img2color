@@ -19,14 +19,27 @@ let textureScale = 0.25;
 let isErasing    = false;
 let isProtecting = false;
 
+// ── Zoom / Pan state ─────────────────────────────
+let zoomLevel  = 1.0;
+let panX       = 0;
+let panY       = 0;
+let isPanning  = false;
+let panStartX  = 0;
+let panStartY  = 0;
+let spaceDown  = false;
+
 // ── History (Undo / Redo) ──────────────────────────────────────
 const MAX_HISTORY = 20;
-let undoStack = []; // each entry: Float32Array snapshot of maskData
+// Each entry stores both paint mask and protect mask snapshots
+let undoStack = [];
 let redoStack = [];
 
 function saveHistory() {
   if (!maskData) return;
-  undoStack.push(maskData.slice()); // clone
+  undoStack.push({
+    mask:    maskData.slice(),
+    protect: objectMask ? objectMask.slice() : null,
+  });
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
   redoStack = [];
   updateUndoRedoBtns();
@@ -34,8 +47,10 @@ function saveHistory() {
 
 function undo() {
   if (!undoStack.length || !imgLoaded) return;
-  redoStack.push(maskData.slice());
-  maskData = undoStack.pop();
+  redoStack.push({ mask: maskData.slice(), protect: objectMask ? objectMask.slice() : null });
+  const snap = undoStack.pop();
+  maskData   = snap.mask;
+  objectMask = snap.protect;
   redrawPaint();
   drawProtectOverlay();
   updateUndoRedoBtns();
@@ -44,8 +59,10 @@ function undo() {
 
 function redo() {
   if (!redoStack.length || !imgLoaded) return;
-  undoStack.push(maskData.slice());
-  maskData = redoStack.pop();
+  undoStack.push({ mask: maskData.slice(), protect: objectMask ? objectMask.slice() : null });
+  const snap = redoStack.pop();
+  maskData   = snap.mask;
+  objectMask = snap.protect;
   redrawPaint();
   drawProtectOverlay();
   updateUndoRedoBtns();
@@ -61,8 +78,31 @@ function updateUndoRedoBtns() {
 
 // ── Keyboard shortcuts ───────────────────────────────────────
 document.addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
+  // Don't fire if typing in an input
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); return; }
+
+  switch (e.key) {
+    case 'f': case 'F': setTool('fill');    break;
+    case 'e': case 'E': setTool('erase');   break;
+    case 'p': case 'P': setTool('protect'); break;
+    case 'i': case 'I': setTool('eyedrop'); break;
+    case 'b': case 'B': toggleBeforeAfter(); break;
+    case 'Delete': case 'Backspace': clearAll(); break;
+    case '+': case '=': zoomStep(1.25); break;
+    case '-': case '_': zoomStep(0.8);  break;
+    case '0': zoomReset(); break;
+    case '?': toggleShortcuts(); break;
+    case 'F11': e.preventDefault(); toggleFullscreen(); break;
+    case ' ':
+      if (!spaceDown) { spaceDown = true; zone.classList.add('pan-ready'); }
+      e.preventDefault(); break;
+  }
+});
+document.addEventListener('keyup', e => {
+  if (e.key === ' ') { spaceDown = false; zone.classList.remove('pan-ready'); if (isPanning) endPan(); }
 });
 
 const overlayC = document.getElementById('overlay-canvas');
@@ -174,6 +214,7 @@ function initCanvas(img) {
     c.style.top    = offT + 'px';
   });
 
+  annoSVG.setAttribute('viewBox', `0 0 ${W} ${H}`);
   annoSVG.setAttribute('width', W);
   annoSVG.setAttribute('height', H);
   annoSVG.style.width  = displayW + 'px';
@@ -195,6 +236,11 @@ function initCanvas(img) {
   updateUndoRedoBtns();
   document.getElementById('drop-zone').classList.add('hidden');
   document.getElementById('apply-btn').disabled = false;
+  // Show the "New Image" floating button now that a photo is loaded
+  const btnNew = document.getElementById('btn-new-image');
+  if (btnNew) btnNew.style.display = 'flex';
+  // Exit before/after mode if it was active
+  if (baActive) toggleBeforeAfter();
   setStatus(`<b>Image Loaded</b> (${W}x${H}px) · Click walls to paint`);
 }
 
@@ -215,11 +261,105 @@ mainC.addEventListener('click', e => {
     return;
   }
   saveHistory(); // snapshot before fill
-  const tol    = parseInt(document.getElementById('tol').value);
-  const filled = floodFill(x, y, tol);
-  redrawPaint();
-  setStatus(`<b>Filled</b> ${filled.toLocaleString()} pixels`);
+  setStatus('⏳ <b>Filling…</b>');
+  // Defer fill by one frame so the status message paints before the CPU-heavy work
+  requestAnimationFrame(() => {
+    const tol    = parseInt(document.getElementById('tol').value);
+    const filled = floodFill(x, y, tol);
+    redrawPaint();
+    setStatus(`<b>Filled</b> ${filled.toLocaleString()} pixels`);
+  });
 });
+
+// ── Eyedropper: click to sample colour from image ───────────────────────────
+mainC.addEventListener('click', e => {
+  if (!imgLoaded || curTool !== 'eyedrop') return;
+  const [x, y] = getCanvasXY(e);
+  if (x < 0 || y < 0 || x >= mainC.width || y >= mainC.height) return;
+  const px = origData.data;
+  const i  = (y * mainC.width + x) * 4;
+  const r  = px[i], g = px[i+1], b = px[i+2];
+  const hex = '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('').toUpperCase();
+  setColor(hex, 'Sampled');
+  document.getElementById('color-input').value = hex;
+  setStatus(`🔬 <b>Picked</b> ${hex} from image`);
+  setTool('fill'); // auto-switch back to fill after picking
+});
+
+// ── Pan: Space+drag or middle-mouse drag ─────────────────────────────────────
+function startPan(e) {
+  isPanning = true;
+  const src = e.touches ? e.touches[0] : e;
+  panStartX = src.clientX - panX;
+  panStartY = src.clientY - panY;
+  zone.classList.add('panning');
+  zone.classList.remove('pan-ready');
+}
+function movePan(e) {
+  if (!isPanning) return;
+  const src = e.touches ? e.touches[0] : e;
+  panX = src.clientX - panStartX;
+  panY = src.clientY - panStartY;
+  applyZoomPan();
+}
+function endPan() {
+  isPanning = false;
+  zone.classList.remove('panning');
+  if (spaceDown) zone.classList.add('pan-ready');
+}
+
+// Middle-mouse pan
+zone.addEventListener('mousedown', e => {
+  if (e.button === 1) { e.preventDefault(); startPan(e); }
+  if (e.button === 0 && spaceDown) { e.preventDefault(); startPan(e); }
+});
+window.addEventListener('mousemove', e => { if (isPanning) movePan(e); });
+window.addEventListener('mouseup',   e => { if (isPanning && (e.button === 1 || e.button === 0)) endPan(); });
+
+// Touch pan (two fingers)
+let lastTouchDist = 0;
+zone.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    lastTouchDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    // Use midpoint as pan start
+    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    panStartX = mx - panX; panStartY = my - panY;
+    isPanning = true;
+  }
+}, { passive: false });
+zone.addEventListener('touchmove', e => {
+  if (e.touches.length === 2) {
+    e.preventDefault();
+    // Pinch zoom
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    if (lastTouchDist > 0) {
+      const delta = dist / lastTouchDist;
+      zoomStep(delta, true);
+    }
+    lastTouchDist = dist;
+    // Pinch pan
+    const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    panX = mx - panStartX; panY = my - panStartY;
+    applyZoomPan();
+  }
+}, { passive: false });
+zone.addEventListener('touchend', () => { if (isPanning) endPan(); lastTouchDist = 0; });
+
+// Scroll wheel zoom
+zone.addEventListener('wheel', e => {
+  e.preventDefault();
+  const delta = e.deltaY < 0 ? 1.12 : 0.9;
+  zoomStep(delta, true);
+}, { passive: false });
 
 // ── Erase: drag brush ────────────────────────────────────────────────────────
 function getCanvasXY(e) {
@@ -247,12 +387,76 @@ function applyEraseBrush(e) {
 mainC.addEventListener('mousedown', e => {
   if (!imgLoaded) return;
   if (curTool === 'erase')   { saveHistory(); isErasing = true; applyEraseBrush(e); }
-  if (curTool === 'protect') { isProtecting = true; applyProtectBrush(e); }
+  if (curTool === 'protect') { saveHistory(); isProtecting = true; applyProtectBrush(e); }
 });
 mainC.addEventListener('mousemove', e => {
   if (isErasing   && curTool === 'erase')   applyEraseBrush(e);
   if (isProtecting && curTool === 'protect') applyProtectBrush(e);
+  // Draw brush cursor preview for erase / protect tools
+  if (imgLoaded && (curTool === 'erase' || curTool === 'protect')) {
+    drawBrushCursor(e);
+  } else {
+    clearBrushCursor();
+  }
 });
+mainC.addEventListener('mouseleave', clearBrushCursor);
+
+// ── Brush cursor preview ─────────────────────────────────────────────────────
+let brushCursorActive = false;
+function drawBrushCursor(e) {
+  const rect = mainC.getBoundingClientRect();
+  // Position in CSS pixels relative to canvas element
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  // Brush radius in CSS pixels (scale canvas-pixel radius → display pixels)
+  const r  = parseInt(document.getElementById('brush-size')?.value || 30);
+  const scaleX = rect.width / mainC.width;
+  const rDisplay = r * scaleX;
+
+  const W = overlayC.width, H = overlayC.height;
+  overlayX.clearRect(0, 0, W, H);
+
+  // Re-draw protect overlay if it exists
+  if (objectMask) {
+    const img = new ImageData(W, H);
+    for (let i = 0; i < objectMask.length; i++) {
+      if (!objectMask[i]) continue;
+      const p = i * 4;
+      img.data[p] = 255; img.data[p+1] = 160; img.data[p+2] = 0; img.data[p+3] = 55;
+    }
+    overlayX.putImageData(img, 0, 0);
+  }
+
+  // Draw cursor ring in canvas coordinate space (scale CSS px → canvas px)
+  const canvasCx = cx / scaleX;
+  const canvasCy = cy / (rect.height / mainC.height);
+
+  overlayX.save();
+  overlayX.beginPath();
+  overlayX.arc(canvasCx, canvasCy, r, 0, Math.PI * 2);
+  const isProtect = curTool === 'protect';
+  overlayX.strokeStyle = isProtect ? 'rgba(240,180,41,0.9)' : 'rgba(255,255,255,0.85)';
+  overlayX.lineWidth   = Math.max(1.5, 2 / scaleX);
+  overlayX.setLineDash([Math.max(3, 6/scaleX), Math.max(2, 4/scaleX)]);
+  overlayX.stroke();
+  overlayX.beginPath();
+  overlayX.arc(canvasCx, canvasCy, r, 0, Math.PI * 2);
+  overlayX.strokeStyle = isProtect ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.4)';
+  overlayX.lineWidth   = Math.max(3, 4 / scaleX);
+  overlayX.setLineDash([]);
+  overlayX.globalCompositeOperation = 'destination-over';
+  overlayX.stroke();
+  overlayX.restore();
+  brushCursorActive = true;
+}
+
+function clearBrushCursor() {
+  if (!brushCursorActive) return;
+  const W = overlayC.width, H = overlayC.height;
+  overlayX.clearRect(0, 0, W, H);
+  if (objectMask) drawProtectOverlay(); // restore protect tint
+  brushCursorActive = false;
+}
 window.addEventListener('mouseup', () => {
   if (isErasing)   { isErasing   = false; setStatus('<b>Done erasing</b>'); }
   if (isProtecting){ isProtecting = false; setStatus('<b>Protection applied</b> — now click walls to fill'); }
@@ -386,31 +590,11 @@ function drawProtectOverlay() {
   overlayX.putImageData(img, 0, 0);
 }
 
-mainC.addEventListener('mousedown', e => {
-  if (!imgLoaded) return;
-  if (curTool === 'protect') { isProtecting = true; applyProtectBrush(e); }
-});
-mainC.addEventListener('mousemove', e => {
-  if (curTool === 'protect' && isProtecting) applyProtectBrush(e);
-});
-window.addEventListener('mouseup', () => {
-  if (isProtecting) {
-    isProtecting = false;
-    setStatus('<b>Protection applied</b> — now click walls to fill');
-  }
-});
-mainC.addEventListener('touchstart', e => {
-  if (!imgLoaded || curTool !== 'protect') return;
-  e.preventDefault(); isProtecting = true; applyProtectBrush(e);
-}, { passive: false });
-mainC.addEventListener('touchmove', e => {
-  if (!isProtecting || curTool !== 'protect') return;
-  e.preventDefault(); applyProtectBrush(e);
-}, { passive: false });
-window.addEventListener('touchend', () => { isProtecting = false; });
+/* Duplicate protect listeners removed — handled by the combined listeners above */
 
 function clearAll() {
   if (!imgLoaded) return;
+  saveHistory(); // allow undoing a clear
   maskData && maskData.fill(0.0);
   objectMask = null;
   overlayX.clearRect(0, 0, mainC.width, mainC.height);
@@ -440,8 +624,9 @@ function redrawPaint() {
     const tileW = Math.max(8, Math.round(W * textureScale));
     const tileH = Math.round(tileW * textureImg.naturalHeight / textureImg.naturalWidth);
 
-    // Render shaded tile into an offscreen canvas
-    const offC = new OffscreenCanvas(tileW, tileH);
+    // Render shaded tile into an offscreen canvas (regular canvas for broad compatibility)
+    const offC = document.createElement('canvas');
+    offC.width = tileW; offC.height = tileH;
     const offX = offC.getContext('2d');
     offX.drawImage(textureImg, 0, 0, tileW, tileH);
     const tileData = offX.getImageData(0, 0, tileW, tileH);
@@ -456,11 +641,8 @@ function redrawPaint() {
     }
     offX.putImageData(tileData, 0, 0);
 
-    // Create tiling pattern
-    const patCanvas = document.createElement('canvas');
-    patCanvas.width = tileW; patCanvas.height = tileH;
-    patCanvas.getContext('2d').drawImage(offC, 0, 0);
-    const pat = paintX.createPattern(patCanvas, 'repeat');
+    // Create tiling pattern directly from the shaded tile canvas
+    const pat = paintX.createPattern(offC, 'repeat');
 
     // Build mask clip canvas — use maskData fractional value as alpha
     const clipCanvas = document.createElement('canvas');
@@ -531,6 +713,11 @@ function redrawPaint() {
   }
 
   applyView();
+  // Keep before/after view in sync if it's open
+  if (typeof baActive !== 'undefined' && baActive) {
+    syncBASliderLayout();
+    renderBASplit();
+  }
 }
 
 /* ════════════════════════════════════════════════
@@ -552,10 +739,16 @@ function setView(el, v) {
 
 function applyView() {
   const t = VIEWS[curView] || VIEWS.front;
+  // Apply transform to the canvas-zone so all layers move together
+  const zone = document.getElementById('canvas-zone');
+  zone.style.perspective = '1800px';
+  // Extract just the rotate parts to apply to a wrapper; apply to each canvas
   mainC.style.transform  = t;
   paintC.style.transform = t;
   document.getElementById('overlay-canvas').style.transform = t;
   annoSVG.style.transform = t;
+  // Keep BA slider transform in sync
+  if (typeof baActive !== 'undefined' && baActive) syncBASliderLayout();
 }
 
 /* ════════════════════════════════════════════════
@@ -573,36 +766,252 @@ function setFinish(el, f) {
 
 function setTool(t) {
   curTool = t;
-  ['fill','erase','clear','protect'].forEach(k => {
-    const b = document.getElementById('tbtn-' + k);
-    if (b) b.classList.toggle('active', k === t);
+  ['fill','erase','protect','eye'].forEach(k => {
+    const b = document.getElementById('tbtn-' + (k === 'eye' ? 'eye' : k));
+    if (b) b.classList.toggle('active', (k === 'eye' ? 'eyedrop' : k) === t);
   });
-  mainC.style.cursor = (t === 'erase' || t === 'protect') ? 'cell' : 'crosshair';
+  const isBrush   = (t === 'erase' || t === 'protect');
+  const isEye     = (t === 'eyedrop');
+  mainC.classList.toggle('brush-mode',   isBrush);
+  mainC.classList.toggle('eyedrop-mode', isEye);
+  mainC.style.cursor = isBrush ? 'none' : isEye ? 'crosshair' : 'crosshair';
+  if (!isBrush) clearBrushCursor();
 }
 
 /* ════════════════════════════════════════════════
-   DOWNLOAD
+   BEFORE / AFTER SLIDER
+════════════════════════════════════════════════ */
+let baActive    = false;
+let baDragging  = false;
+let baSplitX    = 0.5; // fraction 0→1 of slider position
+
+const baSlider  = document.getElementById('ba-slider');
+const baCanvas  = document.getElementById('ba-canvas');
+const baDivider = document.getElementById('ba-divider');
+const baCtx     = baCanvas ? baCanvas.getContext('2d') : null;
+
+function toggleBeforeAfter() {
+  if (!imgLoaded) { setStatus('⚠ Upload a photo first'); return; }
+  baActive = !baActive;
+  const btn = document.getElementById('tbtn-ba');
+  if (btn) btn.classList.toggle('active', baActive);
+
+  if (baActive) {
+    // Size ba canvas to match internal resolution
+    baCanvas.width  = mainC.width;
+    baCanvas.height = mainC.height;
+    baSlider.style.display = 'block';
+    // Match CSS display size & position to the main canvas
+    syncBASliderLayout();
+    renderBASplit();
+    setStatus('⇆ <b>Compare mode</b> — drag the divider');
+  } else {
+    baSlider.style.display = 'none';
+    setStatus('<b>Compare closed</b>');
+  }
+}
+
+function syncBASliderLayout() {
+  // Mirror main canvas CSS position/size onto the ba-slider overlay
+  baSlider.style.left   = mainC.style.left;
+  baSlider.style.top    = mainC.style.top;
+  baSlider.style.width  = mainC.style.width;
+  baSlider.style.height = mainC.style.height;
+  baSlider.style.transform = mainC.style.transform || '';
+  // Position divider line
+  baDivider.style.left = (baSplitX * 100) + '%';
+}
+
+function renderBASplit() {
+  if (!baActive || !baCtx) return;
+  const W = baCanvas.width, H = baCanvas.height;
+  const splitPx = Math.round(baSplitX * W);
+
+  baCtx.clearRect(0, 0, W, H);
+
+  // LEFT side: BEFORE (original, no paint)
+  baCtx.drawImage(mainC, 0, 0);
+
+  // RIGHT side: AFTER (composite with paint)
+  // Draw paint only in the right half using clipping
+  baCtx.save();
+  baCtx.beginPath();
+  baCtx.rect(splitPx, 0, W - splitPx, H);
+  baCtx.clip();
+  baCtx.drawImage(mainC,  0, 0);
+  baCtx.drawImage(paintC, 0, 0);
+  baCtx.restore();
+}
+
+// Drag logic — works on both mouse and touch
+function baGetX(e) {
+  const src = e.touches ? e.touches[0] : e;
+  const rect = baSlider.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (src.clientX - rect.left) / rect.width));
+}
+
+baDivider.addEventListener('mousedown',  e => { e.preventDefault(); baDragging = true; baDivider.classList.add('dragging'); });
+baDivider.addEventListener('touchstart', e => { e.preventDefault(); baDragging = true; baDivider.classList.add('dragging'); }, { passive: false });
+
+window.addEventListener('mousemove', e => {
+  if (!baDragging) return;
+  baSplitX = baGetX(e);
+  baDivider.style.left = (baSplitX * 100) + '%';
+  renderBASplit();
+});
+window.addEventListener('touchmove', e => {
+  if (!baDragging) return;
+  baSplitX = baGetX(e);
+  baDivider.style.left = (baSplitX * 100) + '%';
+  renderBASplit();
+}, { passive: true });
+window.addEventListener('mouseup',  () => { if (baDragging) { baDragging = false; baDivider.classList.remove('dragging'); } });
+window.addEventListener('touchend', () => { if (baDragging) { baDragging = false; baDivider.classList.remove('dragging'); } });
+
+// Also tap anywhere on the ba-slider to move divider instantly
+baSlider.addEventListener('click', e => {
+  if (e.target === baDivider || baDivider.contains(e.target)) return;
+  baSplitX = baGetX(e);
+  baDivider.style.left = (baSplitX * 100) + '%';
+  renderBASplit();
+});
+
+// Re-render whenever paint changes while compare is open
+const _origRedraw = redrawPaint;
+// (patched below after redrawPaint is defined — see bottom of file)
+
+/* ════════════════════════════════════════════════
+   DOWNLOAD WITH WATERMARK
 ════════════════════════════════════════════════ */
 function downloadImage() {
   if (!imgLoaded) { alert('Upload a room photo first.'); return; }
-  // Composite: draw original + paint layer on a fresh canvas
-  const out  = document.createElement('canvas');
-  out.width  = mainC.width;
-  out.height = mainC.height;
+
+  const W = mainC.width, H = mainC.height;
+  const out = document.createElement('canvas');
+  out.width  = W; out.height = H;
   const ctx  = out.getContext('2d');
-  ctx.drawImage(mainC,  0, 0); // room photo
-  ctx.drawImage(paintC, 0, 0); // painted layer
 
-  // Filename: ChromaWall_<ColorName>_<HEX>.png
-  const name = (document.getElementById('cname')?.textContent || 'Custom').replace(/\s+/g, '-');
-  const hex  = (document.getElementById('chex')?.textContent  || '#000000').replace('#', '');
-  const filename = `ChromaWall_${name}_${hex}.png`;
+  // 1. Draw composite (room + paint)
+  ctx.drawImage(mainC,  0, 0);
+  ctx.drawImage(paintC, 0, 0);
 
+  // 2. Watermark — bottom-right pill badge
+  const colorName = (document.getElementById('cname')?.textContent || 'Custom');
+  const hexCode   = (document.getElementById('chex')?.textContent  || '#FFFFFF');
+  const hexRaw    = hexCode.replace('#','');
+
+  // Watermark dimensions — scale with image width
+  const scale     = Math.max(1, W / 1200);
+  const padX      = Math.round(22 * scale);
+  const padY      = Math.round(18 * scale);
+  const pillPad   = Math.round(14 * scale);
+  const pillH     = Math.round(52 * scale);
+  const radius    = Math.round(12 * scale);
+  const swatchR   = Math.round(10 * scale);
+  const swatchX   = padX + pillPad + swatchR;
+  const gap       = Math.round(10 * scale);
+
+  // Fonts
+  const titleSize = Math.round(11 * scale);
+  const nameSize  = Math.round(15 * scale);
+  const hexSize   = Math.round(11 * scale);
+
+  ctx.font = `700 ${titleSize}px "Space Mono", monospace`;
+  ctx.letterSpacing = '2px';
+  const titleTxt  = 'RAZEL STUDIO';
+  const titleW    = ctx.measureText(titleTxt).width;
+  ctx.font = `700 ${nameSize}px "DM Sans", sans-serif`;
+  const nameW     = ctx.measureText(colorName).width;
+  ctx.font        = `400 ${hexSize}px "Space Mono", monospace`;
+  const hexW      = ctx.measureText(hexCode).width;
+  const textW     = Math.max(titleW, nameW, hexW);
+  const pillW     = swatchR * 2 + gap + textW + pillPad * 2;
+
+  const pillX = W - padX - pillW;
+  const pillY = H - padY - pillH;
+
+  // Pill background
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur  = Math.round(16 * scale);
+  ctx.shadowOffsetY = Math.round(4 * scale);
+  ctx.fillStyle   = 'rgba(11,11,15,0.82)';
+  roundRect(ctx, pillX, pillY, pillW, pillH, radius);
+  ctx.fill();
+  ctx.restore();
+
+  // Subtle left accent border
+  ctx.save();
+  const grad = ctx.createLinearGradient(pillX, pillY, pillX, pillY + pillH);
+  grad.addColorStop(0,   '#ff4d6d');
+  grad.addColorStop(1,   '#7c3aed');
+  ctx.fillStyle = grad;
+  roundRect(ctx, pillX, pillY, Math.round(3 * scale), pillH, [radius, 0, 0, radius]);
+  ctx.fill();
+  ctx.restore();
+
+  // Color swatch circle
+  const swatchCY  = pillY + pillH / 2;
+  const textLeft  = swatchX + swatchR + gap;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(swatchX, swatchCY, swatchR, 0, Math.PI * 2);
+  ctx.fillStyle = hexCode;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth   = Math.round(1.5 * scale);
+  ctx.stroke();
+  ctx.restore();
+
+  // Text: brand title
+  ctx.save();
+  ctx.font = `700 ${titleSize}px "Space Mono", monospace`;
+  ctx.fillStyle   = 'rgba(240,180,41,0.9)';  // gold
+  ctx.textBaseline = 'top';
+  const textTopY  = pillY + Math.round(9 * scale);
+  ctx.fillText(titleTxt, textLeft, textTopY);
+
+  // Text: color name
+  ctx.font         = `600 ${nameSize}px "DM Sans", sans-serif`;
+  ctx.fillStyle    = '#f0f0f8';
+  ctx.textBaseline = 'top';
+  ctx.fillText(colorName, textLeft, textTopY + titleSize + Math.round(3 * scale));
+
+  // Text: hex code
+  ctx.font         = `400 ${hexSize}px "Space Mono", monospace`;
+  ctx.fillStyle    = 'rgba(160,160,184,0.85)';
+  ctx.textBaseline = 'top';
+  ctx.fillText(hexCode, textLeft, textTopY + titleSize + nameSize + Math.round(6 * scale));
+  ctx.restore();
+
+  // Trigger download
+  const safeName  = colorName.replace(/\s+/g, '-');
+  const filename  = `RazelStudio_${safeName}_${hexRaw}.png`;
   const a = document.createElement('a');
   a.href     = out.toDataURL('image/png');
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   setStatus(`⬇ <b>Saved</b> ${filename}`);
+}
+
+// Helper: rounded rect path (supports per-corner radii array or single number)
+function roundRect(ctx, x, y, w, h, r) {
+  if (typeof r === 'number') r = [r, r, r, r];
+  const [tl, tr, br, bl] = r;
+  ctx.beginPath();
+  ctx.moveTo(x + tl, y);
+  ctx.lineTo(x + w - tr, y);
+  ctx.quadraticCurveTo(x + w, y,       x + w, y + tr);
+  ctx.lineTo(x + w, y + h - br);
+  ctx.quadraticCurveTo(x + w, y + h,   x + w - br, y + h);
+  ctx.lineTo(x + bl, y + h);
+  ctx.quadraticCurveTo(x, y + h,       x, y + h - bl);
+  ctx.lineTo(x, y + tl);
+  ctx.quadraticCurveTo(x, y,           x + tl, y);
+  ctx.closePath();
 }
 
 /* ════════════════════════════════════════════════
@@ -638,6 +1047,8 @@ function loadTexture(e) {
       prev.classList.add('show');
       document.getElementById('tex-name').textContent = file.name.length > 18 ? file.name.slice(0,15)+'…' : file.name;
       document.querySelectorAll('.ptex').forEach(p => p.classList.remove('sel'));
+      // Auto-switch to texture mode when a custom texture is uploaded
+      setMode('texture');
       if (imgLoaded && maskData) redrawPaint();
     };
     img.src = ev.target.result;
@@ -692,6 +1103,8 @@ function selectPreset(idx, el) {
     prev.src = img.src;
     prev.classList.add('show');
     document.getElementById('tex-name').textContent = PRESETS[idx].name;
+    // Auto-switch to texture mode when a preset is chosen
+    setMode('texture');
     if (imgLoaded && maskData) redrawPaint();
   };
   img.src = bigC.toDataURL();
@@ -966,8 +1379,103 @@ window.addEventListener('resize', () => {
     annoSVG.style.height = displayH + 'px';
     annoSVG.style.left   = offL + 'px';
     annoSVG.style.top    = offT + 'px';
+    // Keep viewBox in sync with internal canvas resolution so AI boxes don't drift
+    annoSVG.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    annoSVG.setAttribute('width',  W);
+    annoSVG.setAttribute('height', H);
+    if (typeof baActive !== 'undefined' && baActive) syncBASliderLayout();
   }, 120);
 });
 
 setTool('fill');
 updateUndoRedoBtns(); // both disabled until a fill/erase action is made
+
+/* ════════════════════════════════════════════════
+   ZOOM / PAN
+════════════════════════════════════════════════ */
+const canvasInner = document.getElementById('canvas-inner');
+
+function applyZoomPan() {
+  if (!canvasInner) return;
+  canvasInner.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+  const lbl = document.getElementById('zoom-label');
+  if (lbl) lbl.textContent = Math.round(zoomLevel * 100) + '%';
+}
+
+function zoomStep(factor, keepCenter = false) {
+  const prev = zoomLevel;
+  zoomLevel = Math.max(0.15, Math.min(8, zoomLevel * factor));
+  if (!keepCenter) {
+    // Scale pan to keep canvas centred
+    panX *= zoomLevel / prev;
+    panY *= zoomLevel / prev;
+  }
+  applyZoomPan();
+}
+
+function zoomReset() {
+  zoomLevel = 1; panX = 0; panY = 0;
+  applyZoomPan();
+}
+
+/* ════════════════════════════════════════════════
+   LIGHT / DARK THEME TOGGLE
+════════════════════════════════════════════════ */
+function toggleTheme() {
+  document.body.classList.toggle('light');
+  const btn = document.getElementById('btn-theme');
+  const isLight = document.body.classList.contains('light');
+  if (btn) btn.textContent = isLight ? '🌙' : '☀';
+}
+
+/* ════════════════════════════════════════════════
+   FULLSCREEN
+════════════════════════════════════════════════ */
+function toggleFullscreen() {
+  const shell = document.querySelector('.shell');
+  shell.classList.toggle('fullscreen');
+  const btn = document.getElementById('btn-fs');
+  if (btn) btn.textContent = shell.classList.contains('fullscreen') ? '⛶' : '⛶';
+  // Recalculate canvas layout after panel hides/shows
+  setTimeout(() => {
+    if (imgLoaded) {
+      const W = mainC.width, H = mainC.height;
+      const pad = 40;
+      const maxW = zone.clientWidth  - pad;
+      const maxH = zone.clientHeight - pad;
+      const ratio = Math.min(maxW / W, maxH / H, 1);
+      const displayW = Math.round(W * ratio);
+      const displayH = Math.round(H * ratio);
+      const offL = Math.round((zone.clientWidth  - displayW) / 2);
+      const offT = Math.round((zone.clientHeight - displayH) / 2);
+      [mainC, paintC, document.getElementById('overlay-canvas')].forEach(c => {
+        c.style.width = displayW + 'px'; c.style.height = displayH + 'px';
+        c.style.left  = offL + 'px';    c.style.top    = offT + 'px';
+      });
+      annoSVG.style.cssText += `width:${displayW}px;height:${displayH}px;left:${offL}px;top:${offT}px`;
+      if (baActive) syncBASliderLayout();
+    }
+  }, 50);
+}
+// Also exit our custom fullscreen on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const shell = document.querySelector('.shell');
+    if (shell.classList.contains('fullscreen')) shell.classList.remove('fullscreen');
+  }
+});
+
+/* ════════════════════════════════════════════════
+   KEYBOARD SHORTCUTS OVERLAY
+════════════════════════════════════════════════ */
+function toggleShortcuts() {
+  const ov = document.getElementById('shortcuts-overlay');
+  if (ov) ov.classList.toggle('open');
+}
+// Close on Escape (if not fullscreen)
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const ov = document.getElementById('shortcuts-overlay');
+    if (ov && ov.classList.contains('open')) { ov.classList.remove('open'); }
+  }
+});

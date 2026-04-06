@@ -302,6 +302,74 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.3); }
 .chip.wall-chip { background: rgba(45,212,191,.07); border-color: rgba(45,212,191,.3); color: var(--teal); }
 .chip.obj-chip  { background: rgba(255,77,109,.07); border-color: rgba(255,77,109,.25); color: var(--accent); }
 
+/* Hide the system cursor when brush-mode is active (custom ring replaces it) */
+#main-canvas.brush-mode { cursor: none !important; }
+
+/* ══════════════════════════════════════════════════
+   BEFORE / AFTER SLIDER
+══════════════════════════════════════════════════ */
+.ba-slider {
+  position: absolute; inset: 0; z-index: 20;
+  overflow: hidden; border-radius: 4px;
+  user-select: none; -webkit-user-select: none;
+}
+.ba-slider canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; display: block;
+}
+.ba-divider {
+  position: absolute; top: 0; bottom: 0;
+  width: 2px; background: rgba(255,255,255,0.9);
+  box-shadow: 0 0 14px rgba(0,0,0,0.55);
+  transform: translateX(-50%);
+  cursor: ew-resize;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  transition: box-shadow .2s;
+}
+.ba-divider:hover, .ba-divider.dragging { box-shadow: 0 0 20px rgba(255,255,255,0.35); }
+.ba-handle {
+  width: 46px; height: 46px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.6));
+  transition: transform .15s;
+}
+.ba-divider:hover .ba-handle,
+.ba-divider.dragging .ba-handle { transform: scale(1.18); }
+.ba-label {
+  position: absolute; top: 12px;
+  font-family: 'Space Mono', monospace;
+  font-size: .56rem; font-weight: 700; letter-spacing: 2px;
+  color: #fff; background: rgba(0,0,0,0.58);
+  backdrop-filter: blur(4px);
+  padding: 4px 10px; border-radius: 100px;
+  white-space: nowrap; pointer-events: none;
+}
+.ba-label-before { right: 10px; }
+.ba-label-after  { left:  10px; }
+
+/* Before/After toolbar button */
+.tbtn.tbtn-ba { background: rgba(45,212,191,.1); border-color: rgba(45,212,191,.35); color: var(--teal); }
+.tbtn.tbtn-ba:hover { background: rgba(45,212,191,.2); border-color: var(--teal); }
+.tbtn.tbtn-ba.active { background: var(--teal); border-color: var(--teal); color: #111; font-weight: 700; }
+
+/* ══════════════════════════════════════════════════
+   NEW IMAGE BUTTON (floating inside canvas zone)
+══════════════════════════════════════════════════ */
+.btn-new-image {
+  position: absolute; top: 12px; left: 12px; z-index: 15;
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(17,17,24,.82); backdrop-filter: blur(8px);
+  border: 1px solid var(--border2); color: var(--sub);
+  font-family: 'DM Sans', sans-serif; font-size: .74rem; font-weight: 600;
+  padding: 7px 13px; border-radius: 9px; cursor: pointer;
+  transition: all .18s; white-space: nowrap;
+}
+.btn-new-image:hover {
+  background: rgba(255,77,109,.12);
+  border-color: var(--accent); color: var(--accent);
+}
+
 /* Apply button */
 .apply-btn {
   width: calc(100% - 36px); margin: 0 18px 18px;
@@ -415,3 +483,114 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.3); }
 @media (max-width: 400px) {
   .palette { grid-template-columns: repeat(8,1fr); }
 }
+
+/* ══════════════════════════════════════════════════
+   EYEDROPPER TOOL BUTTON
+══════════════════════════════════════════════════ */
+.tbtn.tbtn-eye        { background: rgba(124,58,237,.1); border-color: rgba(124,58,237,.35); color: #c4b5fd; }
+.tbtn.tbtn-eye:hover  { background: rgba(124,58,237,.2); border-color: var(--accent2); }
+.tbtn.tbtn-eye.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+
+/* ── Zoom label in toolbar ──────────────────────── */
+.zoom-label {
+  font-family: 'Space Mono', monospace; font-size: .62rem;
+  color: var(--text); min-width: 36px; text-align: center; user-select: none;
+}
+
+/* ── Small icon-only header buttons ──────────────── */
+.hdr-btn-icon {
+  padding: 7px 10px; font-size: .9rem; min-width: 34px; justify-content: center;
+}
+
+/* ══════════════════════════════════════════════════
+   LIGHT THEME
+══════════════════════════════════════════════════ */
+body.light {
+  --bg: #f4f4f8; --surface: #ffffff; --panel: #f0f0f6; --card: #e8e8f0;
+  --border: #d0d0e0; --border2: #b8b8d0; --text: #18181f; --sub: #50507a; --muted: #8888aa;
+}
+body.light .canvas-zone {
+  background:
+    radial-gradient(ellipse at 20% 80%, rgba(255,77,109,.07) 0%, transparent 55%),
+    radial-gradient(ellipse at 80% 15%, rgba(124,58,237,.07) 0%, transparent 55%),
+    var(--bg);
+}
+body.light body::before { opacity: .4; }
+body.light .header { background: rgba(244,244,248,.9); }
+body.light .toolbar { background: var(--surface); }
+body.light .tbtn { color: var(--sub); }
+body.light .btn-new-image { background: rgba(244,244,248,.9); }
+
+/* ══════════════════════════════════════════════════
+   FULLSCREEN — hide header/toolbar for clean view
+══════════════════════════════════════════════════ */
+.shell.fullscreen .header  { display: none; }
+.shell.fullscreen .toolbar { display: none; }
+.shell.fullscreen .panel   { display: none; }
+.shell.fullscreen .body    { grid-template-columns: 1fr; }
+.shell.fullscreen .workspace { border-right: none; }
+/* Exit fullscreen hint */
+.shell.fullscreen::after {
+  content: 'Press Esc or F11 to exit fullscreen';
+  position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+  font-family: 'Space Mono', monospace; font-size: .58rem; letter-spacing: 1.5px;
+  color: rgba(255,255,255,0.5); background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(6px); padding: 5px 14px; border-radius: 100px;
+  pointer-events: none; z-index: 200;
+}
+
+/* ══════════════════════════════════════════════════
+   KEYBOARD SHORTCUTS OVERLAY
+══════════════════════════════════════════════════ */
+.shortcuts-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: rgba(0,0,0,0.65); backdrop-filter: blur(8px);
+  display: none; align-items: center; justify-content: center;
+}
+.shortcuts-overlay.open { display: flex; }
+.shortcuts-card {
+  background: var(--panel); border: 1px solid var(--border2);
+  border-radius: 18px; padding: 28px 32px;
+  width: min(520px, 92vw); max-height: 85vh; overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(0,0,0,.6);
+  animation: scaleIn .2s ease;
+}
+@keyframes scaleIn { from { transform: scale(.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.shortcuts-title {
+  font-family: 'Bebas Neue', sans-serif; font-size: 1.4rem; letter-spacing: 4px;
+  color: var(--text); margin-bottom: 20px;
+  background: linear-gradient(135deg, #ff4d6d, #7c3aed);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.shortcuts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin-bottom: 22px; }
+.sk-row { display: flex; align-items: center; gap: 10px; }
+kbd {
+  font-family: 'Space Mono', monospace; font-size: .62rem;
+  background: var(--card); border: 1px solid var(--border2); color: var(--text);
+  padding: 4px 8px; border-radius: 6px; white-space: nowrap; flex-shrink: 0;
+  box-shadow: 0 2px 0 var(--border2);
+}
+.sk-row span { font-size: .78rem; color: var(--sub); }
+.shortcuts-close {
+  width: 100%; padding: 11px; border-radius: 10px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border: none; color: #fff; font-family: 'Bebas Neue', sans-serif;
+  font-size: .95rem; letter-spacing: 3px; cursor: pointer;
+  transition: opacity .15s;
+}
+.shortcuts-close:hover { opacity: .85; }
+
+/* ══════════════════════════════════════════════════
+   ZOOM/PAN — canvas wrapper transform
+══════════════════════════════════════════════════ */
+/* The canvas-zone itself gets overflow:hidden already; we use a wrapper div for zoom */
+#canvas-inner {
+  position: absolute; inset: 0;
+  transform-origin: center center;
+  will-change: transform;
+}
+/* Pan cursor */
+.canvas-zone.panning         { cursor: grabbing !important; }
+.canvas-zone.pan-ready       { cursor: grab !important; }
+/* Eyedrop cursor override */
+#main-canvas.eyedrop-mode    { cursor: crosshair !important; }

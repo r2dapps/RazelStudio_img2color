@@ -21,12 +21,10 @@
       </div>
       <div class="header-actions">
         <span class="badge badge-engine">⬡ 3D Engine</span>
-        <!-- AI badge — hidden until AI section is re-enabled -->
-        <!-- <span class="badge badge-ai">✦ Claude Vision</span> -->
-        <!-- Download button -->
-        <button class="hdr-btn" id="btn-download" onclick="downloadImage()" title="Download painted image">
-          ⬇ Download
-        </button>
+        <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" id="btn-theme" title="Toggle light/dark theme">☀</button>
+        <button class="hdr-btn hdr-btn-icon" onclick="toggleFullscreen()" id="btn-fs" title="Fullscreen (F11)">⛶</button>
+        <button class="hdr-btn hdr-btn-icon" onclick="toggleShortcuts()" title="Keyboard shortcuts (?)">⌨</button>
+        <button class="hdr-btn" id="btn-download" onclick="downloadImage()" title="Download painted image">⬇ Download</button>
       </div>
     </header>
 
@@ -55,11 +53,35 @@
               onchange="handleFile(event)">
           </div>
 
-          <!-- Canvas layers -->
-          <canvas id="main-canvas"></canvas>
-          <canvas id="paint-canvas"></canvas>
-          <canvas id="overlay-canvas"></canvas>
-          <svg id="anno-svg"></svg>
+          <!-- Canvas layers (wrapped for zoom/pan) -->
+          <div id="canvas-inner">
+            <canvas id="main-canvas"></canvas>
+            <canvas id="paint-canvas"></canvas>
+            <canvas id="overlay-canvas"></canvas>
+            <svg id="anno-svg"></svg>
+          </div>
+
+          <!-- Before / After comparison slider -->
+          <div class="ba-slider" id="ba-slider" style="display:none">
+            <canvas id="ba-canvas"></canvas>
+            <div class="ba-divider" id="ba-divider">
+              <div class="ba-handle">
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                  <circle cx="11" cy="11" r="10" fill="rgba(0,0,0,0.55)" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
+                  <path d="M7 11H4M18 11h-3M7 11l3-3M7 11l3 3M15 11l-3-3M15 11l-3 3" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+              <div class="ba-label ba-label-before">BEFORE</div>
+              <div class="ba-label ba-label-after">AFTER</div>
+            </div>
+          </div>
+
+          <!-- Upload New Image button — visible once a photo is loaded -->
+          <button class="btn-new-image" id="btn-new-image" style="display:none"
+            onclick="document.getElementById('file-input-new').click()" title="Load a different room photo">
+            📁 New Image
+          </button>
+          <input type="file" id="file-input-new" accept="image/*" style="display:none" onchange="handleFile(event)">
 
         </div><!-- /canvas-zone -->
 
@@ -68,13 +90,12 @@
 
           <!-- Tool buttons -->
           <div class="tg">
-            <button class="tbtn active" id="tbtn-fill" onclick="setTool('fill')" title="Fill wall with colour">🪣
-              Fill</button>
-            <button class="tbtn" id="tbtn-erase" onclick="setTool('erase')" title="Soft-erase painted area">🧹
-              Erase</button>
-            <button class="tbtn tbtn-protect" id="tbtn-protect" onclick="setTool('protect')"
-              title="Protect objects from fill">🛡 Protect</button>
-            <button class="tbtn" id="tbtn-clear" onclick="clearAll()" title="Reset all paint">↺ Reset</button>
+            <button class="tbtn active" id="tbtn-fill" onclick="setTool('fill')" title="Fill wall with colour (F)">🪣 Fill</button>
+            <button class="tbtn" id="tbtn-erase" onclick="setTool('erase')" title="Soft-erase painted area (E)">🧹 Erase</button>
+            <button class="tbtn tbtn-protect" id="tbtn-protect" onclick="setTool('protect')" title="Protect objects from fill (P)">🛡 Protect</button>
+            <button class="tbtn tbtn-eye" id="tbtn-eye" onclick="setTool('eyedrop')" title="Pick colour from image (I)">🔬 Pick</button>
+            <button class="tbtn" id="tbtn-clear" onclick="clearAll()" title="Reset all paint (Del)">↺ Reset</button>
+            <button class="tbtn tbtn-ba" id="tbtn-ba" onclick="toggleBeforeAfter()" title="Before / After comparison (B)">⇆ Compare</button>
           </div>
 
           <div class="divider"></div>
@@ -87,7 +108,15 @@
 
           <div class="divider"></div>
 
-          <!-- Sliders -->
+          <!-- Zoom controls -->
+          <div class="tg">
+            <button class="tbtn" onclick="zoomStep(1.25)" title="Zoom In (+)">＋</button>
+            <span class="zoom-label" id="zoom-label">100%</span>
+            <button class="tbtn" onclick="zoomStep(0.8)" title="Zoom Out (-)">－</button>
+            <button class="tbtn" onclick="zoomReset()" title="Fit to screen (0)">⊡ Fit</button>
+          </div>
+
+          <div class="divider"></div>
           <div class="tol-row">
             <label>Tolerance</label>
             <input type="range" id="tol" min="5" max="80" value="20"
@@ -246,7 +275,7 @@
         </div>
 
         <!-- Apply -->
-        <button class="apply-btn" id="apply-btn" disabled onclick="redrawPaint()">
+        <button class="apply-btn" id="apply-btn" disabled onclick="redrawPaint(); setStatus('<b>Settings applied</b> to painted area')" title="Re-render painted area with current colour, opacity, blend &amp; finish">
           Apply Paint
         </button>
 
@@ -255,6 +284,29 @@
   </div><!-- /shell -->
 
   <script src="img2color.js"></script>
-</body>
+
+  <!-- Keyboard shortcuts overlay -->
+  <div class="shortcuts-overlay" id="shortcuts-overlay" onclick="toggleShortcuts()">
+    <div class="shortcuts-card" onclick="event.stopPropagation()">
+      <div class="shortcuts-title">⌨ Keyboard Shortcuts</div>
+      <div class="shortcuts-grid">
+        <div class="sk-row"><kbd>F</kbd><span>Fill tool</span></div>
+        <div class="sk-row"><kbd>E</kbd><span>Erase tool</span></div>
+        <div class="sk-row"><kbd>P</kbd><span>Protect tool</span></div>
+        <div class="sk-row"><kbd>I</kbd><span>Eyedropper / Pick color</span></div>
+        <div class="sk-row"><kbd>B</kbd><span>Before / After compare</span></div>
+        <div class="sk-row"><kbd>Del</kbd><span>Reset all paint</span></div>
+        <div class="sk-row"><kbd>Ctrl Z</kbd><span>Undo</span></div>
+        <div class="sk-row"><kbd>Ctrl Y</kbd><span>Redo</span></div>
+        <div class="sk-row"><kbd>+</kbd><span>Zoom in</span></div>
+        <div class="sk-row"><kbd>−</kbd><span>Zoom out</span></div>
+        <div class="sk-row"><kbd>0</kbd><span>Fit to screen</span></div>
+        <div class="sk-row"><kbd>Space</kbd><span>Hold to pan canvas</span></div>
+        <div class="sk-row"><kbd>F11</kbd><span>Fullscreen</span></div>
+        <div class="sk-row"><kbd>?</kbd><span>This panel</span></div>
+      </div>
+      <button class="shortcuts-close" onclick="toggleShortcuts()">Close</button>
+    </div>
+  </div>
 
 </html>
