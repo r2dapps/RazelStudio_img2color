@@ -93,9 +93,9 @@
 
           <!-- Tool buttons -->
           <div class="tg">
-            <button class="tbtn active" id="tbtn-fill" onclick="setTool('fill')" title="Fill wall with colour (F)">🪣 Fill</button>
-            <button class="tbtn" id="tbtn-erase" onclick="setTool('erase')" title="Soft-erase painted area (E)">🧹 Erase</button>
-            <button class="tbtn tbtn-protect" id="tbtn-protect" onclick="setTool('protect')" title="Protect objects from fill (P)">🛡 Protect</button>
+            <button class="tbtn active" id="tbtn-sam-add" onclick="setTool('sam-add')" title="Add wall space (L Click)">➕ Add Area</button>
+            <button class="tbtn" id="tbtn-sam-sub" onclick="setTool('sam-sub')" title="Exclude objects (Shift+Click)">➖ Exclude</button>
+            <button class="tbtn" id="tbtn-flood" onclick="setTool('flood')" title="Classic flood fill (G)">🪣 Flood</button>
             <button class="tbtn tbtn-eye" id="tbtn-eye" onclick="setTool('eyedrop')" title="Pick colour from image (I)">🔬 Pick</button>
             <button class="tbtn" id="tbtn-clear" onclick="clearAll()" title="Reset all paint (Del)">↺ Reset</button>
             <button class="tbtn tbtn-ba" id="tbtn-ba" onclick="toggleBeforeAfter()" title="Before / After comparison (B)">⇆ Compare</button>
@@ -177,7 +177,7 @@
               <input type="color" id="color-input" value="#ff4d6d" oninput="setColor(this.value,'Custom')">
             </div>
             <div class="color-meta">
-              <div class="hex" id="chex">#FF4D6D</div>
+              <input type="text" class="hex-input" id="chex" maxlength="7" value="#FF4D6D" onchange="setColor(this.value, 'Custom')">
               <div class="cname" id="cname">Coral Rouge</div>
             </div>
           </div>
@@ -251,14 +251,29 @@
 
         <!-- 5. AI Segmentation ──────────────────────────────────────────── -->
         <div class="sec tab-pane" data-pane="ai">
-          <div class="sec-title">✦ AI Auto-Detect</div>
+          <div class="sec-title">✦ AI Segmentation</div>
           <p style="font-size: 0.75rem; color: var(--sub); margin-bottom: 12px; line-height: 1.4;">
-            Automatically detect and perfectly mask walls using an on-device neural network (Segformer).
+            Automatically detect entire walls, or use the ➕/➖ tools to perfectly interact with objects.
           </p>
           <button class="tbtn active" style="width: 100%; justify-content: center; padding: 12px; border-color: rgba(124,58,237,0.5); background: rgba(124,58,237,0.15);" onclick="runAISegmentation()" id="btn-run-ai">
-             🤖 Detect Walls Now
+             🤖 Auto-Detect Walls
           </button>
-          <div id="ai-status" style="font-size: 0.72rem; color: #c4b5fd; margin-top: 10px; text-align: center; line-height: 1.4;"></div>
+          
+          <div class="divider" style="height:1px; width:100%; margin: 15px 0;"></div>
+          <div class="sec-title">Interactive AI (SAM)</div>
+          
+          <div class="sam-status-card" id="sam-status-card" style="display:flex; align-items:center; gap:10px; background:var(--card); padding:10px; border-radius:8px; margin-bottom:10px;">
+            <div class="sam-status-icon" id="sam-status-icon" style="font-size:1.2rem;">⏳</div>
+            <div class="sam-status-body">
+              <div class="sam-status-title" id="sam-status-title" style="font-weight:600; font-size:0.8rem; color:var(--text);">Initializing...</div>
+              <div class="sam-status-sub" id="sam-status-sub" style="font-size:0.7rem; color:var(--sub);">Readying neural network</div>
+            </div>
+          </div>
+          <div class="sam-prog-wrap" id="sam-prog-wrap" style="height:4px; background:var(--border); border-radius:2px; overflow:hidden;">
+            <div class="sam-prog-bar" id="sam-prog-bar" style="width:0%; height:100%; background:var(--accent); transition:width 0.3s;"></div>
+          </div>
+          
+          <div id="ai-status" style="font-size: 0.72rem; color: var(--sub); margin-top: 10px; text-align: center; line-height: 1.4;"></div>
         </div>
 
         <!-- Stub elements required by JS (keep even while AI is disabled) -->

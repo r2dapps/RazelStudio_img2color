@@ -16,8 +16,13 @@ let imgMime      = null;
 let curMode      = 'color';   // 'color' | 'texture'
 let textureImg   = null;
 let textureScale = 0.25;
-let isErasing    = false;
-let isProtecting = false;
+
+/* ── MobileSAM Web Worker State ──────────────── */
+let samWorker    = null;
+let samReady     = false;
+let samEncoded   = false;
+let samBusy      = false;
+let samPoints    = []; // Array of multipoint clicks {x,y,label}
 
 // ── Colour history (last 5 unique picks) ─────────────────────
 const MAX_HIST = 5;
@@ -115,9 +120,9 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); return; }
 
   switch (e.key) {
-    case 'f': case 'F': setTool('fill');    break;
-    case 'e': case 'E': setTool('erase');   break;
-    case 'p': case 'P': setTool('protect'); break;
+    case 's': case 'S': setTool('sam-add'); break;
+    case 'x': case 'X': setTool('sam-sub'); break;
+    case 'f': case 'F': setTool('flood');   break;
     case 'i': case 'I': setTool('eyedrop'); break;
     case 'b': case 'B': toggleBeforeAfter(); break;
     case 'Delete': case 'Backspace': clearAll(); break;
@@ -171,7 +176,7 @@ COLORS.forEach(([hex, name]) => {
 function pickColor(hex, name, el) {
   curColor = hex;
   document.getElementById('csb').style.background = hex;
-  document.getElementById('chex').textContent = hex.toUpperCase();
+  document.getElementById('chex').value = hex.toUpperCase();
   document.getElementById('cname').textContent = name;
   document.getElementById('color-input').value = hex;
   document.querySelectorAll('.sw').forEach(s => s.classList.remove('sel'));
@@ -181,9 +186,12 @@ function pickColor(hex, name, el) {
 }
 
 function setColor(hex, name) {
+  if (!hex.startsWith('#')) hex = '#' + hex;
+  if (hex.length === 4) hex = '#' + hex[1]+hex[1] + hex[2]+hex[2] + hex[3]+hex[3];
+  
   curColor = hex;
   document.getElementById('csb').style.background = hex;
-  document.getElementById('chex').textContent = hex.toUpperCase();
+  document.getElementById('chex').value = hex.toUpperCase();
   document.getElementById('cname').textContent = name || 'Custom';
   document.querySelectorAll('.sw').forEach(s => s.classList.remove('sel'));
   addToColorHistory(hex, name || 'Custom'); // ← history
@@ -227,8 +235,9 @@ function initCanvas(img) {
   const displayH = Math.round(img.naturalHeight * ratio);
 
   // High resolution internal size (decoupled from display size)
-  // Capped at 4096 to prevent memory crashes, but allowing original if smaller
-  const maxInternal = 4096;
+  // Capped at 1920 (1080p equivalent) to guarantee incredibly smooth UI
+  // and lighting rendering on low-end mobile devices and camera outputs.
+  const maxInternal = 1920;
   const iRatio = Math.min(maxInternal / img.naturalWidth, maxInternal / img.naturalHeight, 1);
   const W = Math.round(img.naturalWidth  * iRatio);
   const H = Math.round(img.naturalHeight * iRatio);
@@ -279,44 +288,53 @@ function initCanvas(img) {
 /* ════════════════════════════════════════════════
    CANVAS CLICK
 ════════════════════════════════════════════════ */
-// ── Fill: single click ───────────────────────────────────────────────────────
+// ── Multiplexed Canvas Click Handler ─────────────────────────────────────────
 mainC.addEventListener('click', e => {
-  if (!imgLoaded || curTool !== 'fill') return;
+  if (!imgLoaded) return;
+  
   const rect = mainC.getBoundingClientRect();
   const sx = mainC.width  / rect.width;
   const sy = mainC.height / rect.height;
-  const x  = Math.round((e.clientX - rect.left) * sx);
-  const y  = Math.round((e.clientY - rect.top)  * sy);
+  const src = e.touches ? e.touches[0] : e;
+  const x  = Math.round((src.clientX - rect.left) * sx);
+  const y  = Math.round((src.clientY - rect.top)  * sy);
+  
   if (x < 0 || y < 0 || x >= mainC.width || y >= mainC.height) return;
-  if (objectMask && objectMask[y * mainC.width + x]) {
-    setStatus('⚠ <b>Object detected here</b> — click on a wall area to paint it');
+
+  if (curTool === 'eyedrop') {
+    const px = origData.data;
+    const i  = (y * mainC.width + x) * 4;
+    const r  = px[i], g = px[i+1], b = px[i+2];
+    const hex = '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('').toUpperCase();
+    setColor(hex, 'Sampled');
+    document.getElementById('color-input').value = hex;
+    setStatus(`🔬 <b>Picked</b> ${hex} from image`);
+    setTool('sam-add'); // auto-switch back to AI after picking
     return;
   }
-  saveHistory(); // snapshot before fill
-  setStatus('⏳ <b>Filling…</b>');
-  // Defer fill by one frame so the status message paints before the CPU-heavy work
-  requestAnimationFrame(() => {
-    const tol    = parseInt(document.getElementById('tol').value);
-    const filled = floodFill(x, y, tol);
-    applyMaskBlur(1.5); // 1.5px Gaussian Blur for smooth paint transitions
-    redrawPaint();
-    setStatus(`<b>Filled</b> ${filled.toLocaleString()} pixels`);
-  });
-});
 
-// ── Eyedropper: click to sample colour from image ───────────────────────────
-mainC.addEventListener('click', e => {
-  if (!imgLoaded || curTool !== 'eyedrop') return;
-  const [x, y] = getCanvasXY(e);
-  if (x < 0 || y < 0 || x >= mainC.width || y >= mainC.height) return;
-  const px = origData.data;
-  const i  = (y * mainC.width + x) * 4;
-  const r  = px[i], g = px[i+1], b = px[i+2];
-  const hex = '#' + [r,g,b].map(v => v.toString(16).padStart(2,'0')).join('').toUpperCase();
-  setColor(hex, 'Sampled');
-  document.getElementById('color-input').value = hex;
-  setStatus(`🔬 <b>Picked</b> ${hex} from image`);
-  setTool('fill'); // auto-switch back to fill after picking
+  // MobileSAM Interactive Taps
+  if (curTool === 'sam-add' || curTool === 'sam-sub') {
+    samDecodeInteractive(x, y, curTool === 'sam-add' ? 1 : 0);
+    return;
+  }
+
+  // Classic fallback flood-fill
+  if (curTool === 'flood') {
+    if (objectMask && objectMask[y * mainC.width + x]) {
+      setStatus('⚠ <b>Object detected here</b> — click on a wall area to paint it');
+      return;
+    }
+    saveHistory(); // snapshot before fill
+    setStatus('⏳ <b>Filling…</b>');
+    requestAnimationFrame(() => {
+      const tol    = parseInt(document.getElementById('tol').value);
+      const filled = floodFill(x, y, tol);
+      applyMaskBlur(1.5);
+      redrawPaint();
+      setStatus(`<b>Filled</b> ${filled.toLocaleString()} pixels`);
+    });
+  }
 });
 
 // ── Pan: Space+drag or middle-mouse drag ─────────────────────────────────────
@@ -394,116 +412,117 @@ zone.addEventListener('wheel', e => {
   zoomStep(delta, true);
 }, { passive: false });
 
-// ── Erase: drag brush ────────────────────────────────────────────────────────
-function getCanvasXY(e) {
-  const rect = mainC.getBoundingClientRect();
-  const sx = mainC.width  / rect.width;
-  const sy = mainC.height / rect.height;
-  // Support both mouse and touch
-  const src = e.touches ? e.touches[0] : e;
-  return [
-    Math.round((src.clientX - rect.left) * sx),
-    Math.round((src.clientY - rect.top)  * sy),
-  ];
-}
-
-function applyEraseBrush(e) {
-  if (!imgLoaded) return;
-  const [x, y] = getCanvasXY(e);
-  if (x < 0 || y < 0 || x >= mainC.width || y >= mainC.height) return;
-  const r = parseInt(document.getElementById('brush-size')?.value || 30);
-  eraseAt(x, y, r);
-  redrawPaint();
-  setStatus(`<b>Erasing</b> — release to finish`);
-}
-
-mainC.addEventListener('mousedown', e => {
-  if (!imgLoaded) return;
-  if (curTool === 'erase')   { saveHistory(); isErasing = true; applyEraseBrush(e); }
-  if (curTool === 'protect') { saveHistory(); isProtecting = true; applyProtectBrush(e); }
-});
-mainC.addEventListener('mousemove', e => {
-  if (isErasing   && curTool === 'erase')   applyEraseBrush(e);
-  if (isProtecting && curTool === 'protect') applyProtectBrush(e);
-  // Draw brush cursor preview for erase / protect tools
-  if (imgLoaded && (curTool === 'erase' || curTool === 'protect')) {
-    drawBrushCursor(e);
-  } else {
-    clearBrushCursor();
+/* ════════════════════════════════════════════════
+   MOBILESAM WEB WORKER INTEGRATION
+════════════════════════════════════════════════ */
+function samLoad() {
+  if (samWorker) return; // already loading/loaded
+  
+  const statusIcon = document.getElementById('sam-status-icon');
+  const statusTitle = document.getElementById('sam-status-title');
+  const statusSub = document.getElementById('sam-status-sub');
+  
+  statusIcon.textContent = '⏳';
+  statusTitle.textContent = 'Loading MobileSAM...';
+  statusSub.textContent = 'Initializing Neural Network';
+  
+  try {
+    samWorker = new Worker('sam.worker.js');
+  } catch(e) {
+    statusIcon.textContent = '❌';
+    statusTitle.textContent = 'Worker Error';
+    statusSub.textContent = e.message;
+    return;
   }
-});
-mainC.addEventListener('mouseleave', clearBrushCursor);
 
-// ── Brush cursor preview ─────────────────────────────────────────────────────
-let brushCursorActive = false;
-function drawBrushCursor(e) {
-  const rect = mainC.getBoundingClientRect();
-  // Position in CSS pixels relative to canvas element
-  const cx = e.clientX - rect.left;
-  const cy = e.clientY - rect.top;
-  // Brush radius in CSS pixels (scale canvas-pixel radius → display pixels)
-  const r  = parseInt(document.getElementById('brush-size')?.value || 30);
-  const scaleX = rect.width / mainC.width;
-  const rDisplay = r * scaleX;
-
-  const W = overlayC.width, H = overlayC.height;
-  overlayX.clearRect(0, 0, W, H);
-
-  // Re-draw protect overlay if it exists
-  if (objectMask) {
-    const img = new ImageData(W, H);
-    for (let i = 0; i < objectMask.length; i++) {
-      if (!objectMask[i]) continue;
-      const p = i * 4;
-      img.data[p] = 255; img.data[p+1] = 160; img.data[p+2] = 0; img.data[p+3] = 55;
+  samWorker.onmessage = ({ data }) => {
+    switch (data.type) {
+      case 'progress':
+        statusSub.textContent = data.text;
+        document.getElementById('sam-prog-bar').style.width = (data.pct || 0) + '%';
+        break;
+      case 'ready':
+        samReady = true;
+        statusIcon.textContent = '✦';
+        statusTitle.textContent = 'MobileSAM Ready';
+        statusSub.textContent = 'Tap wall to add, tap object to exclude';
+        document.getElementById('sam-prog-wrap').style.display = 'none';
+        if (imgLoaded) samEncodeWrapper();
+        break;
+      case 'encoded':
+        samEncoded = true;
+        samBusy = false;
+        statusIcon.textContent = '✦';
+        statusSub.textContent = 'Target image embedded & ready to trace';
+        break;
+      case 'mask':
+        samBusy = false;
+        saveHistory();
+        const raw = data.data; // array at origW x origH
+        // Merge the mask (in this multipoint interaction, we replace the mask area 
+        // to respond cleanly to positive/negative clicks locally)
+        // A better UX for paint replaces the active tracking mask
+        for (let i = 0; i < raw.length; i++) {
+          if (raw[i]) maskData[i] = 1.0;
+        }
+        applyMaskBlur(1.5);
+        redrawPaint();
+        setStatus(`✦ <b>Smart Segment Rendered</b>`);
+        break;
+      case 'error':
+        samBusy = false;
+        statusIcon.textContent = '⚠️';
+        statusTitle.textContent = 'SAM Error';
+        statusSub.textContent = data.message;
+        break;
     }
-    overlayX.putImageData(img, 0, 0);
+  };
+  
+  samWorker.postMessage({ type: 'load' });
+}
+
+function samEncodeWrapper() {
+  if (!samWorker || !samReady || !imgLoaded) return;
+  samEncoded = false;
+  samBusy = true;
+  samPoints = []; // reset tracking points for new target
+  document.getElementById('sam-status-sub').textContent = 'Extracting image embedding features...';
+  
+  // Clone image data for the worker to avoid transferring our actual view buffer away
+  const copy = new ImageData(
+    new Uint8ClampedArray(origData.data.buffer.slice()),
+    origData.width, origData.height
+  );
+  samWorker.postMessage({ type: 'encode', imageData: copy });
+}
+
+function samDecodeInteractive(x, y, label) {
+  if (!samReady) {
+    setStatus('⚠️ MobileSAM is still loading, please wait.');
+    return;
   }
-
-  // Draw cursor ring in canvas coordinate space (scale CSS px → canvas px)
-  const canvasCx = cx / scaleX;
-  const canvasCy = cy / (rect.height / mainC.height);
-
-  overlayX.save();
-  overlayX.beginPath();
-  overlayX.arc(canvasCx, canvasCy, r, 0, Math.PI * 2);
-  const isProtect = curTool === 'protect';
-  overlayX.strokeStyle = isProtect ? 'rgba(240,180,41,0.9)' : 'rgba(255,255,255,0.85)';
-  overlayX.lineWidth   = Math.max(1.5, 2 / scaleX);
-  overlayX.setLineDash([Math.max(3, 6/scaleX), Math.max(2, 4/scaleX)]);
-  overlayX.stroke();
-  overlayX.beginPath();
-  overlayX.arc(canvasCx, canvasCy, r, 0, Math.PI * 2);
-  overlayX.strokeStyle = isProtect ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.4)';
-  overlayX.lineWidth   = Math.max(3, 4 / scaleX);
-  overlayX.setLineDash([]);
-  overlayX.globalCompositeOperation = 'destination-over';
-  overlayX.stroke();
-  overlayX.restore();
-  brushCursorActive = true;
+  if (!samEncoded) {
+    setStatus('⚠️ Analyzing image contours, please wait a moment.');
+    return;
+  }
+  if (samBusy) return;
+  samBusy = true;
+  
+  setStatus('⏳ <b>AI is masking object...</b>');
+  
+  // Add the user's point to the active session list
+  samPoints.push({ x, y, label });
+  
+  // Wipe current mask before applying the new exact multipoint prediction
+  maskData.fill(0); 
+  
+  samWorker.postMessage({ 
+    type: 'decode_multi', 
+    points: samPoints, 
+    W: mainC.width, 
+    H: mainC.height 
+  });
 }
-
-function clearBrushCursor() {
-  if (!brushCursorActive) return;
-  const W = overlayC.width, H = overlayC.height;
-  overlayX.clearRect(0, 0, W, H);
-  if (objectMask) drawProtectOverlay(); // restore protect tint
-  brushCursorActive = false;
-}
-window.addEventListener('mouseup', () => {
-  if (isErasing)   { isErasing   = false; setStatus('<b>Done erasing</b>'); }
-  if (isProtecting){ isProtecting = false; setStatus('<b>Protection applied</b> — now click walls to fill'); }
-});
-mainC.addEventListener('touchstart', e => {
-  if (!imgLoaded) return;
-  if (curTool === 'erase')   { e.preventDefault(); saveHistory(); isErasing = true; applyEraseBrush(e); }
-  if (curTool === 'protect') { e.preventDefault(); isProtecting = true; applyProtectBrush(e); }
-}, { passive: false });
-mainC.addEventListener('touchmove', e => {
-  if (isErasing   && curTool === 'erase')   { e.preventDefault(); applyEraseBrush(e); }
-  if (isProtecting && curTool === 'protect') { e.preventDefault(); applyProtectBrush(e); }
-}, { passive: false });
-window.addEventListener('touchend', () => { isErasing = false; isProtecting = false; });
 
 /* ════════════════════════════════════════════════
    FLOOD FILL (stack-based)
@@ -768,7 +787,7 @@ function redrawPaint() {
     }
 
   } else {
-    /* ── COLOR MODE (Multiply Blend Mode) ──────────────────────── */
+    /* ── COLOR MODE (TrueColor Luminosity Remapping) ──────────────────── */
     const col = hexToRgb(curColor);
     if (!col) return;
     const dst = new ImageData(W, H);
@@ -784,12 +803,23 @@ function redrawPaint() {
       // Calculate grayscale luminance of the original image
       const lum = (0.299*oR + 0.587*oG + 0.114*oB) / 255;
       
-      // Multiply blend mode (original luminance acts as multiplier for curColor)
-      const pR = col.r * lum;
-      const pG = col.g * lum;
-      const pB = col.b * lum;
+      // TrueColor Luminosity Remapping:
+      // Primitive 'Multiply' destroys bright paint on dark walls. 
+      // Instead, we calculate local contrast variance from an average wall midtone (0.45).
+      // This preserves physical shadows/highlights while ensuring the 
+      // flat areas of the wall perfectly match the exact target Hex color!
+      const midtone = 0.45;
+      const contrast = lum - midtone; 
       
-      // Preserve highlights based on finish type
+      // Scale shadows slightly heavier than highlights for realistic depth
+      let factor = contrast < 0 ? (1 + contrast * 1.6) : (1 + contrast * 1.1);
+      factor = Math.max(0, factor);
+      
+      const pR = col.r * factor;
+      const pG = col.g * factor;
+      const pB = col.b * factor;
+      
+      // Preserve extreme highlights based on finish type (gloss)
       const sh = shine * Math.pow(lum, 1.8);
       const bl = curBl;
       
@@ -860,22 +890,26 @@ const EYE_CURSOR = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000
 
 function setTool(t) {
   curTool = t;
-  ['fill','erase','protect','eye'].forEach(k => {
+  
+  // Implicitly boot SAM if user clicks the AI tools
+  if (t === 'sam-add' || t === 'sam-sub') {
+    samLoad();
+  }
+  
+  ['sam-add','sam-sub','flood','eye'].forEach(k => {
     const b = document.getElementById('tbtn-' + (k === 'eye' ? 'eye' : k));
     if (b) b.classList.toggle('active', (k === 'eye' ? 'eyedrop' : k) === t);
   });
-  const isBrush = (t === 'erase' || t === 'protect');
-  const isEye   = (t === 'eyedrop');
-  mainC.classList.toggle('brush-mode',   isBrush);
+  
+  const isEye = (t === 'eyedrop');
+  mainC.classList.remove('brush-mode');
   mainC.classList.toggle('eyedrop-mode', isEye);
-  if (isBrush) {
-    mainC.style.cursor = 'none';
-  } else if (isEye) {
+  
+  if (isEye) {
     mainC.style.cursor = EYE_CURSOR;
   } else {
     mainC.style.cursor = 'crosshair';
   }
-  if (!isBrush) clearBrushCursor();
 }
 
 /* ════════════════════════════════════════════════
@@ -1911,9 +1945,19 @@ async function runAISegmentation() {
     
     statusEl.innerHTML = "🧠 Analyzing room geometry...";
     
-    // Pass canvas data URL to the pipeline
-    const results = await aiPipeline(mainC.toDataURL('image/jpeg', 0.8));
+    // Scale image down to max 512x512 before passing to AI to prevent 
+    // memory crashes when Segformer allocates 150 class masks.
+    const origW = mainC.width, origH = mainC.height;
+    const MAX_DIM = 512;
+    const scale = Math.min(MAX_DIM / origW, MAX_DIM / origH, 1);
+    const aiW = Math.round(origW * scale);
+    const aiH = Math.round(origH * scale);
+    const aiCanvas = document.createElement('canvas');
+    aiCanvas.width = aiW; aiCanvas.height = aiH;
+    aiCanvas.getContext('2d').drawImage(mainC, 0, 0, aiW, aiH);
     
+    // Pass resized canvas data URL to the pipeline
+    const results = await aiPipeline(aiCanvas.toDataURL('image/jpeg', 0.8));    
     // ADE20k dataset has a specific class for "wall"
     const wallRes = results.find(r => r.label === 'wall');
     if (!wallRes) {
